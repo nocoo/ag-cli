@@ -5,7 +5,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
-      exclude: ["src/types/**"],
+      exclude: ["src/types/**", "src/index.ts"],
       reportsDirectory: "coverage",
       thresholds: {
         statements: 95,
@@ -34,6 +34,7 @@ export default defineConfig({
           name: "e2e",
           include: ["tests/e2e/**/*.test.ts"],
           environment: "node",
+          globalSetup: ["tests/e2e/global-setup.ts"],
         },
       },
     ],
