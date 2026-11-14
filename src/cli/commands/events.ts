@@ -31,6 +31,7 @@ interface TrackedConversation {
   status: string;
   inboundCount: number;
   artifacts: Set<string>;
+  watcherGeneration: number;
 }
 
 export interface EventsOptions {
@@ -165,12 +166,15 @@ export async function runEventsCommand(
       }
     };
 
+    let stopped = false;
     const stop = (): void => {
+      stopped = true;
       cleanup();
       resolveRun?.(0);
     };
 
     const fail = (error: unknown): void => {
+      stopped = true;
       cleanup();
       rejectRun?.(error);
     };
@@ -201,6 +205,7 @@ export async function runEventsCommand(
         status: observation.status as string,
         inboundCount: 0,
         artifacts: new Set(),
+        watcherGeneration: 0,
       };
     };
 
@@ -222,6 +227,7 @@ export async function runEventsCommand(
       });
       watch.start();
       const primed = watch.readNewSteps();
+      entry.watcherGeneration = watch.generation;
       entry.inboundCount = primed.filter(
         (step) => step.type === "USER_INPUT" || step.type === "SYSTEM_MESSAGE",
       ).length;
@@ -246,6 +252,12 @@ export async function runEventsCommand(
       const entry = tracked.get(conversationId);
       if (entry === undefined) {
         return;
+      }
+      if (entry.watcherGeneration !== watch.generation) {
+        // the transcript was rewritten in place: rebuild the counters from the
+        // new file instead of accumulating onto the pre-rewrite baseline
+        entry.watcherGeneration = watch.generation;
+        entry.inboundCount = 0;
       }
       for (const step of freshSteps) {
         emit({
@@ -314,6 +326,9 @@ export async function runEventsCommand(
           attach(conversationId, false);
         }
       });
+      if (stopped) {
+        return;
+      }
       heartbeatTimer = setInterval(() => {
         guarded(() => {
           emit({ type: "heartbeat", at: timestamp() });

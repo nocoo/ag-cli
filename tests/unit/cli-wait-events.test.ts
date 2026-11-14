@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CliContext, runCli } from "../../src/cli/index";
@@ -492,6 +492,54 @@ describe("wait command", () => {
     expect(payload.children).toEqual([]);
   }, 10_000);
 
+  it("keeps native children adopted without a local parent id (review R3 F10)", async () => {
+    const instance = sandbox();
+    const parent = "e1e1e1e1-1111-4111-8111-e1e1e1e1e1e1";
+    const child = await preparedWorker(instance);
+    const db = initSummariesDb(instance);
+    db.prepare(
+      "UPDATE conversation_summaries SET parent_conversation_id = ? WHERE conversation_id = ?",
+    ).run(parent, child);
+    db.close();
+    registerOwner(instance, parent);
+    // the child was adopted via `label`, so the local row has no parent id
+    const adopter = StateStore.open(resolvePaths(instance.env).stateDbPath, { create: true });
+    adopter.registerConversation(child, { name: "adopted" });
+    adopter.close();
+
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
+    const code = await runCli(["wait", "--children", "all", "--json"], ctx);
+    expect(code).toBe(0);
+    const payload = stdoutJson<{
+      reason: string;
+      children: Array<{ conversationId: string }>;
+    }>(ctx);
+    expect(payload.reason).toBe("done");
+    expect(payload.children).toHaveLength(1);
+    expect(payload.children[0]?.conversationId).toBe(child);
+  });
+
+  it("rejects children waits when the transcript path is unreadable without leaking watchers (review R3 F6)", async () => {
+    const instance = sandbox();
+    const parent = "e2e2e2e2-2222-4222-8222-e2e2e2e2e2e2";
+    const child = await preparedWorker(instance);
+    rmSync(join(logsDir(instance, child), "transcript.jsonl"), { force: true });
+    mkdirSync(join(logsDir(instance, child), "transcript.jsonl"));
+    const store = StateStore.open(resolvePaths(instance.env).stateDbPath, { create: true });
+    store.registerConversation(child, { parentId: parent });
+    store.close();
+    registerOwner(instance, parent);
+
+    const before = process.getActiveResourcesInfo().filter((key) => key === "FSEventWrap").length;
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
+    const code = await runCli(["wait", "--children", "any", "--timeout", "5", "--json"], ctx);
+    expect(code).toBe(1);
+    expect(JSON.parse(stderrText(ctx))).toMatchObject({ error: { kind: "runtime_error" } });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const after = process.getActiveResourcesInfo().filter((key) => key === "FSEventWrap").length;
+    expect(after - before).toBeLessThanOrEqual(0);
+  }, 10_000);
+
   it("fills decided child targets from real observations (review F10)", async () => {
     const instance = sandbox();
     const parent = "c2c2c2c2-2222-4222-8222-c2c2c2c2c2c2";
@@ -862,6 +910,82 @@ describe("events command", () => {
     expect(await runCli(["events", "--heartbeat-ms", "x", "--target", "c404"], badHeartbeat)).toBe(
       2,
     );
+  });
+
+  it("stops initializing after a startup observation failure without leaking timers (review R3 F6)", async () => {
+    const instance = sandbox();
+    initSummariesDb(instance);
+    writeMockAgentapi(instance);
+    const created = runAgentapi(instance, ["new-conversation", "--message", "seed"]);
+    const bad = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
+    writeFileSync(
+      join(logsDir(instance, bad), "transcript.jsonl"),
+      `${JSON.stringify({ step_index: 0, type: "GENERIC", status: "DONE", tool_calls: {} })}\n`,
+    );
+    const store = StateStore.open(resolvePaths(instance.env).stateDbPath, { create: true });
+    store.registerConversation(bad, { name: "bad-shape" });
+    store.close();
+
+    const { runEventsCommand } = await import("../../src/cli/commands/events");
+    const chunks: string[] = [];
+    const before = process.getActiveResourcesInfo().filter((key) => key === "Timeout").length;
+    await expect(
+      runEventsCommand(["--target", "bad-shape", "--heartbeat-ms", "20", "--discovery-ms", "20"], {
+        stdout: {
+          isTTY: false,
+          write(chunk: string) {
+            chunks.push(chunk);
+            return true;
+          },
+        },
+        env: instance.env,
+      }),
+    ).rejects.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(chunks.filter((line) => line.includes("heartbeat"))).toEqual([]);
+    const after = process.getActiveResourcesInfo().filter((key) => key === "Timeout").length;
+    expect(after - before).toBeLessThanOrEqual(0);
+  });
+
+  it("resets turn counters when the transcript is rewritten in place (review R3 F12)", async () => {
+    const instance = sandbox();
+    const conversationId = await preparedWorker(instance);
+    const store = StateStore.open(resolvePaths(instance.env).stateDbPath, { create: true });
+    store.registerConversation(conversationId, { name: "rewritten" });
+    store.close();
+
+    const { runEventsCommand } = await import("../../src/cli/commands/events");
+    const chunks: string[] = [];
+    const controller = new AbortController();
+    const codePromise = runEventsCommand(
+      ["--target", "rewritten", "--heartbeat-ms", "10000"],
+      {
+        stdout: {
+          isTTY: false,
+          write(chunk: string) {
+            chunks.push(chunk);
+            return true;
+          },
+        },
+        env: instance.env,
+      },
+      { abort: controller.signal },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    writeFileSync(
+      join(logsDir(instance, conversationId), "transcript.jsonl"),
+      `${JSON.stringify({ step_index: 0, type: "USER_INPUT", status: "DONE", content: "much longer B" })}\n`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    controller.abort();
+    expect(await codePromise).toBe(0);
+    const turns = chunks
+      .join("")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; turn?: number })
+      .filter((event) => event.type === "turn");
+    expect(turns.map((event) => event.turn)).toEqual([1]);
   });
 
   it("emits event lines that match the schema event definition (review F18)", async () => {

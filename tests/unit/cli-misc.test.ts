@@ -266,6 +266,14 @@ describe("schema command", () => {
     ).properties.options.properties;
     expect(runOptions["--timeout"]).toMatchObject({ type: "integer", default: 180 });
     expect(runOptions["--timeout"]?.const).toBeUndefined();
+    const runSummary = defs.runSummary as unknown as {
+      properties: Record<string, Record<string, unknown>>;
+    };
+    expect(runSummary.properties.reason).toMatchObject({
+      enum: ["done", "blocked", "error", "message", "timeout"],
+    });
+    expect(runSummary.properties.timedOut).toMatchObject({ type: "boolean" });
+    expect(runSummary.properties.durationMs).toMatchObject({ type: "integer", minimum: 0 });
   });
 
   it("validates real command outputs against the schema (review F18)", async () => {
@@ -315,6 +323,13 @@ describe("schema command", () => {
       if (spec.const !== undefined && spec.const !== value) {
         errors.push(`${path}: expected const ${JSON.stringify(spec.const)}`);
       }
+      if (
+        spec.minimum !== undefined &&
+        typeof value === "number" &&
+        value < (spec.minimum as number)
+      ) {
+        errors.push(`${path}: ${value} is below minimum ${String(spec.minimum)}`);
+      }
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
         const properties = (spec.properties ?? {}) as Record<string, unknown>;
         for (const key of (spec.required as string[] | undefined) ?? []) {
@@ -342,18 +357,32 @@ describe("schema command", () => {
       }
     };
 
-    const outputRef = async (command: string[], def: string): Promise<void> => {
+    const outputRef = async (command: string[], def: string, expectedCode = 0): Promise<void> => {
       const ctx = context(false, instance.env);
       const code = await runCli(command, ctx);
-      expect(code, `command ${command.join(" ")} failed: ${stderrText(ctx)}`).toBeLessThan(124);
-      if (code !== 0) return;
+      expect(code, `command ${command.join(" ")} failed: ${stderrText(ctx)}`).toBe(expectedCode);
+      if (code !== 0 && expectedCode === 0) return;
       validate({ $ref: `#/$defs/${def}` }, stdoutJson(ctx), def);
     };
+
+    const timeoutCtx = context(false, { ...instance.env, AG_MOCK_AGENTAPI_MODE: "stuck" });
+    const timeoutCode = await runCli(
+      ["run", "--json", "--timeout", "1", "--name", "schema-timeout", "task"],
+      timeoutCtx,
+    );
+    expect(timeoutCode).toBe(124);
+    validate(
+      { $ref: "#/$defs/runSummary" },
+      stdoutJson<{ reason: string; timedOut: boolean; durationMs: number }>(timeoutCtx),
+      "runSummary",
+    );
 
     const runCtx = context(false, instance.env);
     await runCli(["run", "--bg", "--json", "--name", "schema-run", "task"], runCtx);
     validate({ $ref: "#/$defs/runSummary" }, stdoutJson(runCtx), "runSummary");
-    const conversationId = stdoutJson<{ conversationId: string }>(runCtx).conversationId;
+    const summary = stdoutJson<{ conversationId: string; shortId: string }>(runCtx);
+    const conversationId = summary.conversationId;
+    const shortId = summary.shortId;
 
     await outputRef(["send", "--json", "schema-run", "second"], "receipt");
     await outputRef(["wait", "--json", "schema-run"], "waitResult");
@@ -365,7 +394,7 @@ describe("schema command", () => {
     await outputRef(["status", "--json"], "statusReport");
     await outputRef(["kill", "--json", "schema-run"], "controlResult");
     await outputRef(["interrupt", "--json", conversationId], "controlResult");
-    await outputRef(["rm", "--json", "schema-run"], "controlResult");
+    await outputRef(["rm", "--json", shortId], "controlResult");
 
     expect(errors).toEqual([]);
   });

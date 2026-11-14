@@ -6,6 +6,7 @@ interface JsonSchema {
   enum?: string[];
   const?: string | number;
   default?: string | number | boolean;
+  minimum?: number;
   $ref?: string;
   additionalProperties?: boolean;
   description?: string;
@@ -40,6 +41,9 @@ const $DEFS = {
       parentId: nullableString,
       watermarkStep: { type: "integer" },
       status: conversationStatus,
+      reason: { enum: ["done", "blocked", "error", "message", "timeout"] },
+      timedOut: { type: "boolean" },
+      durationMs: { type: "integer", minimum: 0 },
     },
     ["conversationId", "reused", "watermarkStep", "status"],
   ),

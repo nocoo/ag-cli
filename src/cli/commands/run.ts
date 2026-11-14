@@ -156,15 +156,15 @@ export async function runRunCommand(
     });
 
     if (name !== undefined) {
-      const busyTimeout = Number(store.pragma("busy_timeout") ?? 3000);
       if (flags.flags.has("reuse")) {
+        const waitLimitMs = Math.max(3000, Math.min(timeoutSec * 1000, 10_000));
         // release stale aliases left on terminated rows before deciding
         for (const row of store.listManaged()) {
           if (row.name === name && row.terminated === 1) {
             store.releaseName(row.conversationId);
           }
         }
-        reservationHeld = await acquireReservation(store, name, reservationToken, busyTimeout);
+        reservationHeld = await acquireReservation(store, name, reservationToken, waitLimitMs);
       } else {
         const holder = store.listManaged().find((row) => row.name === name);
         if (holder !== undefined) {
@@ -201,6 +201,7 @@ export async function runRunCommand(
             title: flags.values.get("title"),
             projectId: projectId ?? undefined,
           });
+          store.commitDelivery(existing.conversationId, ticket);
         } catch (error) {
           store.rollbackDelivery(existing.conversationId, ticket);
           throw error;
@@ -232,6 +233,14 @@ export async function runRunCommand(
       }
     }
 
+    if (flags.flags.has("reuse") && name !== undefined && !reservationHeld) {
+      // no active conversation holds the name and another process still owns the
+      // reservation: dispatching here would duplicate the in-flight creation
+      throw new AgCliError("name_conflict", `name ${name} is still being created by another run`, {
+        hint: "Retry once the other run finishes, or pick another name.",
+      });
+    }
+
     const title = flags.values.get("title") ?? name ?? prompt.slice(0, 40);
     const created = await client.newConversation({
       message,
@@ -247,7 +256,7 @@ export async function runRunCommand(
       ...(projectId === null ? {} : { projectId }),
       model,
     });
-    store.beginDelivery(created.conversationId, 0);
+    store.commitDelivery(created.conversationId, store.beginDelivery(created.conversationId, 0));
     if (labelPairs.length > 0) {
       store.setLabels(created.conversationId, labelPairs);
     }

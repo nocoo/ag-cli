@@ -157,7 +157,7 @@ function findChildren(
 ): ChildCandidate[] {
   const children: ChildCandidate[] = [];
   const allManaged = store?.listManaged() ?? [];
-  const managedIds = new Set(allManaged.map((row) => row.conversationId));
+  const managedById = new Map(allManaged.map((row) => [row.conversationId, row]));
   const added = new Set<string>();
   const killed = new Set(
     (reader?.listConversations() ?? [])
@@ -174,13 +174,16 @@ function findChildren(
     }
   }
   for (const row of reader?.listConversations() ?? []) {
-    if (row.killed === 1) {
+    if (row.killed === 1 || added.has(row.conversation_id)) {
       continue;
     }
-    if (managedIds.has(row.conversation_id)) {
+    const managedRow = managedById.get(row.conversation_id);
+    if (managedRow !== undefined && managedRow.terminated === 1) {
       continue;
     }
-    if (row.parent_conversation_id === ownerId && !added.has(row.conversation_id)) {
+    // locally adopted rows may lack a parent id; keep the native relation then
+    const effectiveParent = managedRow?.parentId ?? row.parent_conversation_id;
+    if (effectiveParent === ownerId) {
       added.add(row.conversation_id);
       children.push({ conversationId: row.conversation_id, summary: row });
     }
@@ -215,28 +218,69 @@ async function waitForChildren(options: {
   timeoutSec: number;
 }): Promise<WaitResult> {
   const start = Date.now();
-  const callerBaseline = maxStepIndex(
-    loadTranscriptSteps(options.paths.antigravityDir, options.ownerId),
-  );
-  const children = findChildren(options.reader, options.store, options.ownerId);
-
   const watchers = new Map<string, TranscriptWatcher>();
-  const trackedIds = [options.ownerId, ...children.map((child) => child.conversationId)];
-  for (const conversationId of trackedIds) {
-    const watcher = new TranscriptWatcher({
-      antigravityDir: options.paths.antigravityDir,
-      conversationId,
-      summariesDbPath: options.paths.summariesDbPath,
-      stateDbPath: options.paths.stateDbPath,
-      debounceMs: 20,
-      fallbackMs: 500,
-      onChange: () => {
-        guarded(tick);
-      },
-    });
-    watcher.start();
-    watcher.readNewSteps();
-    watchers.set(conversationId, watcher);
+  let settled = false;
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  const cleanup = (): void => {
+    if (deadlineTimer !== undefined) {
+      clearTimeout(deadlineTimer);
+      deadlineTimer = undefined;
+    }
+    for (const watcher of watchers.values()) {
+      watcher.close();
+    }
+    watchers.clear();
+  };
+  let resolvePromise: (result: WaitResult) => void = () => {};
+  let rejectPromise: (error: unknown) => void = () => {};
+  const promise = new Promise<WaitResult>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  const fail = (error: unknown): void => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    cleanup();
+    rejectPromise(error);
+  };
+  const guarded = (action: () => void): void => {
+    try {
+      action();
+    } catch (error) {
+      fail(error);
+    }
+  };
+
+  let tick: () => void = () => {};
+  let callerBaseline = -1;
+  let children: ChildCandidate[] = [];
+  try {
+    callerBaseline = maxStepIndex(
+      loadTranscriptSteps(options.paths.antigravityDir, options.ownerId),
+    );
+    children = findChildren(options.reader, options.store, options.ownerId);
+    const trackedIds = [options.ownerId, ...children.map((child) => child.conversationId)];
+    for (const conversationId of trackedIds) {
+      const watcher = new TranscriptWatcher({
+        antigravityDir: options.paths.antigravityDir,
+        conversationId,
+        summariesDbPath: options.paths.summariesDbPath,
+        stateDbPath: options.paths.stateDbPath,
+        debounceMs: 20,
+        fallbackMs: 500,
+        onChange: () => {
+          guarded(tick);
+        },
+      });
+      watcher.start();
+      watcher.readNewSteps();
+      watchers.set(conversationId, watcher);
+    }
+  } catch (error) {
+    fail(error);
+    return promise;
   }
 
   const observe = (conversationId: string) =>
@@ -335,18 +379,6 @@ async function waitForChildren(options: {
     return allIdle ? { done: true, reason: "settled" } : { done: false };
   };
 
-  let settled = false;
-  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-  const cleanup = (): void => {
-    if (deadlineTimer !== undefined) {
-      clearTimeout(deadlineTimer);
-      deadlineTimer = undefined;
-    }
-    for (const watcher of watchers.values()) {
-      watcher.close();
-    }
-    watchers.clear();
-  };
   const finish = (result: WaitResult): void => {
     if (settled) {
       return;
@@ -355,30 +387,8 @@ async function waitForChildren(options: {
     cleanup();
     resolvePromise(result);
   };
-  const fail = (error: unknown): void => {
-    if (settled) {
-      return;
-    }
-    settled = true;
-    cleanup();
-    rejectPromise(error);
-  };
-  const guarded = (action: () => void): void => {
-    try {
-      action();
-    } catch (error) {
-      fail(error);
-    }
-  };
 
-  let resolvePromise: (result: WaitResult) => void = () => {};
-  let rejectPromise: (error: unknown) => void = () => {};
-  const promise = new Promise<WaitResult>((resolve, reject) => {
-    resolvePromise = resolve;
-    rejectPromise = reject;
-  });
-
-  const tick = (): void => {
+  tick = (): void => {
     for (const watcher of watchers.values()) {
       watcher.readNewSteps();
     }

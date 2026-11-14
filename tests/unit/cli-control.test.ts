@@ -590,6 +590,40 @@ describe("run command", () => {
     db.close();
   });
 
+  it("never dispatches after a reservation timeout when no active name exists (review R3 F3)", async () => {
+    const { instance } = await prepared();
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    store.acquireNameReservation("slow-name", "another-process");
+    store.close();
+
+    const callsBefore = readMockAgentapiCalls(instance).length;
+    const ctx = context(false, instance.env);
+    const started = Date.now();
+    const code = await runCli(
+      ["run", "--reuse", "--bg", "--json", "--name", "slow-name", "--timeout", "1", "task"],
+      ctx,
+    );
+    expect(code).toBe(1);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(2500);
+    expect(JSON.parse(stderrText(ctx))).toMatchObject({ error: { kind: "name_conflict" } });
+    expect(readMockAgentapiCalls(instance).length).toBe(callsBefore);
+  }, 15_000);
+
+  it("recovers names from stale reservations on the next run (review R3 F3)", async () => {
+    const { instance } = await prepared();
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    store.acquireNameReservation("orphan", "dead-token");
+    store.rawExec(
+      "UPDATE name_reservations SET created_at = '2000-01-01T00:00:00Z' WHERE name = 'orphan'",
+    );
+    store.close();
+
+    const ctx = context(false, instance.env);
+    const code = await runCli(["run", "--bg", "--json", "--name", "orphan", "task"], ctx);
+    expect(code).toBe(0);
+    expect(stdoutJson<{ name: string | null }>(ctx).name).toBe("orphan");
+  });
+
   it("run --reuse on a terminated stale alias creates cleanly without dispatching twice (review F3)", async () => {
     const { instance } = await prepared();
     const first = context(false, instance.env);

@@ -87,6 +87,7 @@ export async function runSendCommand(
       await client.sendMessage(resolved.conversationId, message, {
         title: flags.values.get("title"),
       });
+      store.commitDelivery(resolved.conversationId, ticket);
     } catch (error) {
       if (ticket !== undefined) {
         store.rollbackDelivery(resolved.conversationId, ticket);
