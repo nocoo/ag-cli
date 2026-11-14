@@ -214,6 +214,44 @@ describe("agentapi subprocess wrappers", () => {
     }
   });
 
+  it("filters non-string entries from the inherited environment", async () => {
+    const instance = sandbox();
+    initSummariesDb(instance);
+    writeMockAgentapi(instance);
+    const mock = await startMockLanguageServer();
+    servers.push(mock);
+    writeHubFile(instance, {
+      pid: process.pid,
+      httpPort: mock.port,
+      httpsPort: mock.port,
+      lsVersion: "1.0.0",
+      csrfToken: mock.csrfToken,
+    });
+    const client = await AgentApiClient.connect({
+      antigravityDir: instance.antigravityDir,
+      agentapiBin: instance.agentapiBin,
+      baseEnv: { ...process.env, AG_CLI_JUNK: 42 as unknown as string },
+    });
+    const created = await client.newConversation({ message: "env check" });
+    expect(created.conversationId.length).toBe(36);
+  });
+
+  it("tolerates sendMessage payloads without a step index", async () => {
+    const instance = sandbox();
+    initSummariesDb(instance);
+    writeMockAgentapi(instance);
+    const client = await connectedClient(instance);
+    writeFileSync(
+      instance.agentapiBin,
+      "#!/usr/bin/env node\nprocess.stdout.write('{\"ok\":true}');\n",
+      {
+        mode: 0o755,
+      },
+    );
+    const sent = await client.sendMessage("11111111-1111-4111-8111-111111111111", "x");
+    expect(sent).toEqual({ conversationId: "11111111-1111-4111-8111-111111111111" });
+  });
+
   it("fails clearly when the agentapi binary exits silently", async () => {
     const instance = sandbox();
     initSummariesDb(instance);

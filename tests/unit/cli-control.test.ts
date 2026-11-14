@@ -481,6 +481,23 @@ describe("send command", () => {
     expect(stdoutText(tty)).toContain("watermark 3");
   });
 
+  it("reports nameless preconditions and text receipts", async () => {
+    const { instance } = await prepared();
+    const created = runAgentapi(instance, ["new-conversation", "--message", "slow"], {
+      AG_MOCK_AGENTAPI_MODE: "stuck",
+    });
+    const stuckId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
+
+    const mismatch = context(false, instance.env);
+    const code = await runCli(["send", "--if", "idle", stuckId, "nope"], mismatch);
+    expect(code).toBe(3);
+    expect(JSON.parse(stderrText(mismatch)).error.message).not.toContain("(");
+
+    const tty = context(true, instance.env);
+    expect(await runCli(["send", stuckId, "queued text"], tty)).toBe(0);
+    expect(stdoutText(tty)).toContain("sent to c1 · watermark 1 · queued");
+  });
+
   it("waits for turn completion with --wait", async () => {
     const { instance } = await prepared();
     const runCtx = context(false, instance.env);
@@ -552,6 +569,10 @@ describe("label command", () => {
     const code = await runCli(["label", "labeled", "env=prod"], tty);
     expect(code).toBe(0);
     expect(stdoutText(tty)).toContain("labels on c1: env=prod");
+
+    const cleared = context(true, instance.env);
+    expect(await runCli(["label", "labeled", "env="], cleared)).toBe(0);
+    expect(stdoutText(cleared)).toContain("labels on c1: -");
   });
 });
 

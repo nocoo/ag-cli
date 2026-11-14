@@ -1,5 +1,6 @@
 import { AgCliError } from "../types/protocol";
 import { runControlCommand } from "./commands/control";
+import { runEventsCommand } from "./commands/events";
 import { runGetCommand } from "./commands/get";
 import { runLabelCommand } from "./commands/label";
 import { runLsCommand } from "./commands/ls";
@@ -7,6 +8,7 @@ import { runReadCommand } from "./commands/read";
 import { runRunCommand } from "./commands/run";
 import { runSendCommand } from "./commands/send";
 import { runStatusCommand } from "./commands/status";
+import { runWaitCommand } from "./commands/wait";
 import { emitError, emitText, resolveMode, type StreamLike } from "./format";
 
 export interface CliContext {
@@ -37,10 +39,12 @@ Conversations
 
 Talk & Wait
   send <c> <text>             Send a message to a conversation (--wait: wait for turn)
+  wait [c]                    Wait until done, blocked, or error (--children: any|all)
   interrupt <c>               Cancel the currently running turn in a conversation
 
 More
   status                      Inspect Antigravity daemon, database, and agentapi health
+  events                      Follow state and step changes live (JSON Lines when piped)
 
 <c> is a target like c7, a name (clip-worker), a UUID prefix, or a full UUID.
 Piped output is JSON except run (text summary) and read (Markdown reply).
@@ -119,6 +123,12 @@ export async function runCli(argv: string[], context: CliContext): Promise<numbe
     }
     if (command === "label") {
       return await runLabelCommand(args, context);
+    }
+    if (command === "wait") {
+      return await runWaitCommand(args, context);
+    }
+    if (command === "events") {
+      return await runEventsCommand(args, context);
     }
     if (command === "interrupt" || command === "kill" || command === "rm") {
       return await runControlCommand(command, args, context);

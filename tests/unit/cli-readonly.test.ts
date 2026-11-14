@@ -307,6 +307,39 @@ describe("state-backed conversations", () => {
     expect(stdoutJson<{ parentId: string | null }>(ctx).parentId).toBe(parentId);
   });
 
+  it("renders labels in tty get output", async () => {
+    const instance = sandbox();
+    const conversationId = await prepareConversation(instance);
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    store.registerConversation(conversationId, { name: "observed" });
+    store.setLabels(conversationId, ["env=prod"]);
+    store.close();
+
+    const ctx = context(true, instance.env);
+    const code = await runCli(["get", "observed"], ctx);
+    expect(code).toBe(0);
+    expect(stdoutText(ctx)).toContain("labels: env=prod");
+  });
+
+  it("lists managed rows missing from summaries", async () => {
+    const instance = sandbox();
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    store.registerConversation("bfbfbfbf-bfbf-4fbf-8fbf-bfbfbfbfbfbf", { name: "ghost-managed" });
+    store.close();
+
+    const ctx = context(false, instance.env);
+    await runCli(["ls"], ctx);
+    const rows =
+      stdoutJson<Array<{ shortId: string; name: string; stepCount: number; project: string }>>(ctx);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      shortId: "c1",
+      name: "ghost-managed",
+      stepCount: 0,
+      project: "",
+    });
+  });
+
   it("reports managed counts in status", async () => {
     const instance = sandbox();
     const conversationId = await prepareConversation(instance);
