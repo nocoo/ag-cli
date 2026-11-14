@@ -4,7 +4,7 @@ import { StateStore } from "../../infra/state-store";
 import type { SummariesReader } from "../../infra/summaries-reader";
 import { listBrainArtifacts, openSummariesReader } from "../../infra/summaries-reader";
 import { TranscriptWatcher } from "../../infra/transcript-watcher";
-import { NullgError } from "../../types/protocol";
+import { AgCliError } from "../../types/protocol";
 import { emitText, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
 import { buildTargetRegistry, currentCallerId, observeConversation } from "./registry";
@@ -50,12 +50,12 @@ export async function runEventsCommand(
     repeatables: ["label"],
   });
   if (flags.positionals.length !== 0) {
-    throw new NullgError("invalid_usage", "events takes no positional arguments");
+    throw new AgCliError("invalid_usage", "events takes no positional arguments");
   }
   const labelFilters = flags.repeatable.get("label") ?? [];
   for (const pair of labelFilters) {
     if (pair.indexOf("=") < 1) {
-      throw new NullgError("invalid_usage", `invalid --label ${pair}`, {
+      throw new AgCliError("invalid_usage", `invalid --label ${pair}`, {
         hint: "Use --label key=value.",
       });
     }
@@ -414,7 +414,7 @@ function parsePositive(raw: string | undefined, fallback: number, name: string):
   }
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 1) {
-    throw new NullgError("invalid_usage", `--${name} expects a positive integer, got ${raw}`);
+    throw new AgCliError("invalid_usage", `--${name} expects a positive integer, got ${raw}`);
   }
   return value;
 }

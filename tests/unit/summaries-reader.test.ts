@@ -7,7 +7,7 @@ import { createSandbox, initSummariesDb, type Sandbox } from "../helpers/sandbox
 const active: Sandbox[] = [];
 
 function sandbox(): Sandbox {
-  const created = createSandbox("nullg-unit-summaries");
+  const created = createSandbox("ag-cli-unit-summaries");
   active.push(created);
   return created;
 }

@@ -15,7 +15,7 @@ import {
 const active: Sandbox[] = [];
 
 function sandbox(): Sandbox {
-  const created = createSandbox("nullg-unit-wait");
+  const created = createSandbox("ag-cli-unit-wait");
   active.push(created);
   return created;
 }
@@ -179,7 +179,7 @@ describe("wait command", () => {
     db.close();
     registerOwner(instance, parent);
 
-    const ctx = context(false, { ...instance.env, NULLG_CALLER_ID: parent });
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const code = await runCli(["wait", "--children", "all", "--json", "--timeout", "3"], ctx);
     expect(code).toBe(0);
     const payload = stdoutJson<{ reason: string; children: Array<unknown> }>(ctx);
@@ -198,7 +198,7 @@ describe("wait command", () => {
     db.close();
     registerOwner(instance, parent);
 
-    const ctx = context(false, { ...instance.env, NULLG_CALLER_ID: parent });
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const code = await runCli(["wait", "--children", "all", "--json"], ctx);
     expect(code).toBe(0);
     const payload = stdoutJson<{ reason: string; target: { turn: number; stepCount: number } }>(
@@ -249,7 +249,7 @@ describe("wait command", () => {
     store.close();
 
     registerOwner(instance, parent);
-    const ctx = context(false, { ...instance.env, NULLG_CALLER_ID: parent });
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const code = await runCli(["wait", "--children", "any", "--json"], ctx);
     expect(code).toBe(0);
     const payload = stdoutJson<{ reason: string; target: { conversationId: string } }>(ctx);
@@ -279,7 +279,7 @@ describe("wait command", () => {
     );
 
     registerOwner(instance, parent);
-    const ctx = context(false, { ...instance.env, NULLG_CALLER_ID: parent });
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const waitPromise = runCli(["wait", "--children", "any", "--json", "--timeout", "5"], ctx);
     await new Promise((resolve) => setTimeout(resolve, 300));
     appendFileSync(
@@ -302,7 +302,7 @@ describe("wait command", () => {
     store.close();
 
     registerOwner(instance, parent);
-    const ctx = context(false, { ...instance.env, NULLG_CALLER_ID: parent });
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const code = await runCli(["wait", "--children", "all", "--json"], ctx);
     expect(code).toBe(0);
     const payload = stdoutJson<{
@@ -318,7 +318,7 @@ describe("wait command", () => {
     const instance = sandbox();
     const parent = "6f6f6f6f-6f6f-46f6-86f6-6f6f6f6f6f6f";
     registerOwner(instance, parent);
-    const ctx = context(false, { ...instance.env, NULLG_CALLER_ID: parent });
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const code = await runCli(["wait", "--children", "all", "--json"], ctx);
     expect(code).toBe(0);
     expect(stdoutJson<{ reason: string; children: Array<unknown> }>(ctx)).toMatchObject({
@@ -338,7 +338,7 @@ describe("wait command", () => {
     db.close();
 
     registerOwner(instance, parent);
-    const ctx = context(false, { ...instance.env, NULLG_CALLER_ID: parent });
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const code = await runCli(["wait", "--children", "any", "--json"], ctx);
     expect(code).toBe(0);
     expect(stdoutJson<{ target: { conversationId: string } }>(ctx).target.conversationId).toBe(
@@ -355,7 +355,7 @@ describe("wait command", () => {
     store.close();
 
     registerOwner(instance, parent);
-    const ctx = context(false, { ...instance.env, NULLG_CALLER_ID: parent });
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const code = await runCli(["wait", "--children", "any", "--timeout", "1", "--json"], ctx);
     expect(code).toBe(124);
     expect(stdoutJson<{ reason: string }>(ctx).reason).toBe("timeout");
@@ -377,7 +377,7 @@ describe("wait command", () => {
     store.close();
     registerOwner(instance, parent);
 
-    const ctx = context(true, { ...instance.env, NULLG_CALLER_ID: parent });
+    const ctx = context(true, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const code = await runCli(["wait", "--children", "any"], ctx);
     expect(code).toBe(0);
     const text = stdoutText(ctx);
@@ -455,7 +455,7 @@ describe("wait command", () => {
     store.close();
     registerOwner(instance, parent);
 
-    const ctx = context(false, { ...instance.env, NULLG_CALLER_ID: parent });
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const waitPromise = runCli(["wait", "--children", "any", "--timeout", "5", "--json"], ctx);
     await new Promise((resolve) => setTimeout(resolve, 200));
     const killer = StateStore.open(resolvePaths(instance.env).stateDbPath, { create: true });
@@ -484,7 +484,7 @@ describe("wait command", () => {
     db.close();
     registerOwner(instance, parent);
 
-    const ctx = context(false, { ...instance.env, NULLG_CALLER_ID: parent });
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const code = await runCli(["wait", "--children", "any", "--timeout", "1", "--json"], ctx);
     expect(code).toBe(124);
     const payload = stdoutJson<{ reason: string; children: Array<unknown> }>(ctx);
@@ -507,7 +507,7 @@ describe("wait command", () => {
     adopter.registerConversation(child, { name: "adopted" });
     adopter.close();
 
-    const ctx = context(false, { ...instance.env, NULLG_CALLER_ID: parent });
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const code = await runCli(["wait", "--children", "all", "--json"], ctx);
     expect(code).toBe(0);
     const payload = stdoutJson<{
@@ -536,7 +536,7 @@ describe("wait command", () => {
         return map;
       }, {});
     const before = handles();
-    const ctx = context(false, { ...instance.env, NULLG_CALLER_ID: parent });
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const code = await runCli(["wait", "--children", "any", "--timeout", "5", "--json"], ctx);
     expect(code).toBe(1);
     expect(JSON.parse(stderrText(ctx))).toMatchObject({ error: { kind: "runtime_error" } });
@@ -590,7 +590,7 @@ describe("wait command", () => {
     db.close();
     registerOwner(instance, parent);
 
-    const ctx = context(false, { ...instance.env, NULLG_CALLER_ID: parent });
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const code = await runCli(["wait", "--children", "any", "--json"], ctx);
     expect(code).toBe(0);
     const payload = stdoutJson<{

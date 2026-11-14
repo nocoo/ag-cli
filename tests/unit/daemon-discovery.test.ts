@@ -8,7 +8,7 @@ import {
   inspectDaemons,
   isPidAlive,
 } from "../../src/infra/daemon-discovery";
-import { NullgError } from "../../src/types/protocol";
+import { AgCliError } from "../../src/types/protocol";
 import { createSandbox, type Sandbox, writeHubFile } from "../helpers/sandbox";
 
 const active: Sandbox[] = [];
@@ -334,7 +334,7 @@ describe("discoverDaemon", () => {
 
   it("fails with daemon_unavailable when the daemon directory is missing", async () => {
     const instance = sandbox();
-    await expect(discoverDaemon(instance.antigravityDir)).rejects.toBeInstanceOf(NullgError);
+    await expect(discoverDaemon(instance.antigravityDir)).rejects.toBeInstanceOf(AgCliError);
   });
 
   it("breaks ties between equally healthy daemons by port", async () => {

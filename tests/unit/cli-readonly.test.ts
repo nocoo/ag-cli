@@ -20,7 +20,7 @@ const active: Sandbox[] = [];
 const openServers: Array<{ close(): Promise<void> }> = [];
 
 function sandbox(): Sandbox {
-  const created = createSandbox("nullg-unit-cli");
+  const created = createSandbox("ag-cli-unit-cli");
   active.push(created);
   return created;
 }
@@ -154,7 +154,7 @@ describe("state-backed conversations", () => {
   it("lists managed conversations with short ids, names and labels", async () => {
     const instance = sandbox();
     const conversationId = await prepareConversation(instance);
-    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
     store.registerConversation(conversationId, { name: "deps-clip", cwd: "/tmp/clip" });
     store.setLabels(conversationId, ["task=deps", "repo=clip"]);
     store.close();
@@ -188,7 +188,7 @@ describe("state-backed conversations", () => {
     runAgentapi(instance, ["new-conversation", "--message", "second"]);
     const second = "";
     expect(second).toBe("");
-    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
     const secondRow = store.listManaged().length; // no rows yet
     expect(secondRow).toBe(0);
     const summaries = (await import("../../src/infra/summaries-reader")).openSummariesReader(
@@ -227,7 +227,7 @@ describe("state-backed conversations", () => {
     const instance = sandbox();
     const parentId = "16161616-1616-4161-8161-161616161616";
     const child = await prepareConversation(instance);
-    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
     store.registerConversation(child, { name: "child-a", parentId });
     const orphan = "17171717-1717-4171-8171-171717171717";
     store.registerConversation(orphan, { name: "orphan" });
@@ -243,7 +243,7 @@ describe("state-backed conversations", () => {
     );
     db.close();
 
-    const ctx = context(false, { ...instance.env, NULLG_CALLER_ID: parentId });
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parentId });
     const code = await runCli(["ls", "--children"], ctx);
     expect(code).toBe(0);
     const rows = stdoutJson<Array<{ conversationId: string }>>(ctx);
@@ -263,7 +263,7 @@ describe("state-backed conversations", () => {
   it("hides terminated managed conversations unless --all", async () => {
     const instance = sandbox();
     const conversationId = await prepareConversation(instance);
-    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
     store.registerConversation(conversationId, { name: "doomed" });
     store.markTerminated(conversationId);
     store.close();
@@ -283,7 +283,7 @@ describe("state-backed conversations", () => {
   it("reflects shortId, name, labels, parentId and watermark in get and read", async () => {
     const instance = sandbox();
     const conversationId = await prepareConversation(instance);
-    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
     store.registerConversation(conversationId, {
       name: "ui-check",
       parentId: "19191919-1919-4191-8191-191919191919",
@@ -351,7 +351,7 @@ describe("state-backed conversations", () => {
   it("renders labels in tty get output", async () => {
     const instance = sandbox();
     const conversationId = await prepareConversation(instance);
-    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
     store.registerConversation(conversationId, { name: "observed" });
     store.setLabels(conversationId, ["env=prod"]);
     store.close();
@@ -364,7 +364,7 @@ describe("state-backed conversations", () => {
 
   it("lists managed rows missing from summaries", async () => {
     const instance = sandbox();
-    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
     store.registerConversation("bfbfbfbf-bfbf-4fbf-8fbf-bfbfbfbfbfbf", { name: "ghost-managed" });
     store.close();
 
@@ -384,7 +384,7 @@ describe("state-backed conversations", () => {
   it("renders tty headers with short ids and names for managed conversations", async () => {
     const instance = sandbox();
     const conversationId = await prepareConversation(instance);
-    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
     store.registerConversation(conversationId, { name: "tty-worker" });
     store.close();
 
@@ -407,7 +407,7 @@ describe("state-backed conversations", () => {
   it("reports managed counts in status", async () => {
     const instance = sandbox();
     const conversationId = await prepareConversation(instance);
-    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
     store.registerConversation(conversationId, { name: "watched" });
     store.close();
 
@@ -462,7 +462,7 @@ describe("strict parsing", () => {
 
     const help = context(true, instance.env);
     expect(await runCli(["run", "--help"], help)).toBe(0);
-    expect(stdoutText(help)).toContain("nullg run");
+    expect(stdoutText(help)).toContain("ag-cli run");
     expect(await runCli(["wait", "-h"], help)).toBe(0);
   });
 
@@ -654,7 +654,7 @@ describe("status command", () => {
       csrfToken: "dead",
     });
     writeFileSync(instance.agentapiBin, "#!/bin/sh\nexit 0\n");
-    writeFileSync(join(instance.nullgHome, "state.db"), "");
+    writeFileSync(join(instance.agCliHome, "state.db"), "");
 
     const ctx = context(false, instance.env);
     const code = await runCli(["status", "--json"], ctx);
@@ -1305,7 +1305,7 @@ describe("read command", () => {
     const ctx = context(true, instance.env);
     const code = await runCli(["read", "nope-target-!!"], ctx);
     expect(code).toBe(2);
-    expect(stderrText(ctx)).toContain("nullg:");
+    expect(stderrText(ctx)).toContain("ag-cli:");
   });
 
   it("prints a uuid header for unmanaged conversations on a tty", async () => {

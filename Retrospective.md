@@ -218,11 +218,11 @@ inside the packed tarball; `scripts/check-package.ts` smoke-tests it after insta
 
 ## 2026-11-14 · npm unscoped name similarity is checked only on `PUT`
 
-`GET https://registry.npmjs.org/ag-cli` returned 404, so `ag-cli` passed initial name
-checks, yet `npm publish` (`PUT`) failed with `403 Forbidden` because npm strips
-hyphens/punctuation for anti-typosquatting similarity checks and `agcli` (as well as
-`agctl`) already existed. Avoid relying on `GET /<name>` 404 alone: check
-punctuation-stripped, plural, and phonetic neighbors (`nullg`, `null-g`, `nullgs`) on
-`https://registry.npmjs.org/` before locking an unscoped package name. Because `ag-cli`
-also collided with the vendor brand, the repository, CLI binary, env vars (`NULLG_*`),
-error type (`NullgError`), and package were unified to `nullg`.
+`GET https://registry.npmjs.org/ag-cli` and `GET https://registry.npmjs.org/nullg` both
+returned `404`, yet `npm publish` (`PUT`) rejected both with `403 Forbidden`: npm's
+anti-typosquatting check runs only on publish and compares normalized/edit-distance
+neighbors across all unscoped packages (`ag-cli` collided with `agcli`; `nullg` collided
+with `bull`). Publishing under an owned user scope (`@nocoo/ag` with `publishConfig: {
+"access": "public" }`) bypasses unscoped global similarity collisions while keeping the
+CLI binary (`ag-cli`), repository (`ag-cli`), env vars (`AG_CLI_*`), and error class
+(`AgCliError`) unchanged.

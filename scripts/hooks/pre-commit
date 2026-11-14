@@ -11,7 +11,7 @@ gitleaks protect --staged --redact
 
 staged_files=$(git diff --cached --name-only --diff-filter=ACMR)
 
-snapshot=$(mktemp -d "${TMPDIR:-/tmp}/nullg-pre-commit.XXXXXX")
+snapshot=$(mktemp -d "${TMPDIR:-/tmp}/ag-cli-pre-commit.XXXXXX")
 trap 'rm -rf "$snapshot"' EXIT
 git checkout-index --all --prefix="$snapshot/"
 

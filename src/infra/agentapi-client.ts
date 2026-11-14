@@ -5,7 +5,7 @@ import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { assertUuid } from "../domain/validation";
-import { NullgError } from "../types/protocol";
+import { AgCliError } from "../types/protocol";
 import { type DaemonCandidate, discoverDaemon, type HealthProbe } from "./daemon-discovery";
 
 const execFileAsync = promisify(execFile);
@@ -41,10 +41,10 @@ export class AgentApiClient {
       executable = false;
     }
     if (!executable) {
-      throw new NullgError(
+      throw new AgCliError(
         "daemon_unavailable",
         `agentapi binary missing or not executable at ${options.agentapiBin}`,
-        { hint: "Install Antigravity or point NULLG_AGENTAPI_BIN at a runnable binary." },
+        { hint: "Install Antigravity or point AG_CLI_AGENTAPI_BIN at a runnable binary." },
       );
     }
     return new AgentApiClient(
@@ -96,13 +96,13 @@ export class AgentApiClient {
       } catch {
         detail = detail.slice(0, 200);
       }
-      throw new NullgError("runtime_error", `agentapi failed: ${detail}`);
+      throw new AgCliError("runtime_error", `agentapi failed: ${detail}`);
     }
     const trimmed = stdout.trim();
     try {
       return JSON.parse(trimmed) as Record<string, unknown>;
     } catch {
-      throw new NullgError(
+      throw new AgCliError(
         "runtime_error",
         `agentapi returned non-JSON output: ${trimmed.slice(0, 200)}`,
       );
@@ -129,7 +129,7 @@ export class AgentApiClient {
     const payload = await this.runAgentapi(args, input.projectId);
     const conversationId = payload.conversationId;
     if (typeof conversationId !== "string" || conversationId.length === 0) {
-      throw new NullgError("runtime_error", `agentapi new-conversation returned no conversationId`);
+      throw new AgCliError("runtime_error", `agentapi new-conversation returned no conversationId`);
     }
     return { conversationId: assertUuid(conversationId, "upstream") };
   }
@@ -159,7 +159,7 @@ export class AgentApiClient {
       let settled = false;
       let responseRef: import("node:http").IncomingMessage | undefined;
       let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-      const reject = (error: NullgError): void => {
+      const reject = (error: AgCliError): void => {
         if (settled) {
           return;
         }
@@ -196,18 +196,18 @@ export class AgentApiClient {
           });
           response.on("aborted", () => {
             reject(
-              new NullgError("runtime_error", `RPC ${method} response aborted before completion`),
+              new AgCliError("runtime_error", `RPC ${method} response aborted before completion`),
             );
           });
           response.on("error", (error: Error) => {
             reject(
-              new NullgError("runtime_error", `RPC ${method} response failed: ${error.message}`),
+              new AgCliError("runtime_error", `RPC ${method} response failed: ${error.message}`),
             );
           });
           response.on("close", () => {
             if (!ended) {
               reject(
-                new NullgError("runtime_error", `RPC ${method} response closed before completion`),
+                new AgCliError("runtime_error", `RPC ${method} response closed before completion`),
               );
             }
           });
@@ -218,7 +218,7 @@ export class AgentApiClient {
             }
             if (response.statusCode !== 200) {
               reject(
-                new NullgError(
+                new AgCliError(
                   "runtime_error",
                   `RPC ${method} failed with status ${response.statusCode}`,
                 ),
@@ -228,7 +228,7 @@ export class AgentApiClient {
             try {
               resolve(raw.length === 0 ? ({} as T) : (JSON.parse(raw) as T));
             } catch {
-              reject(new NullgError("runtime_error", `RPC ${method} returned invalid json`));
+              reject(new AgCliError("runtime_error", `RPC ${method} returned invalid json`));
             }
           });
         },
@@ -236,13 +236,13 @@ export class AgentApiClient {
       deadlineTimer = setTimeout(() => {
         req.destroy();
         responseRef?.destroy();
-        reject(new NullgError("runtime_error", `RPC ${method} deadline exceeded`));
+        reject(new AgCliError("runtime_error", `RPC ${method} deadline exceeded`));
       }, this.rpcTimeoutMs);
       req.on("response", (response) => {
         responseRef = response;
       });
       req.on("error", (error: Error) => {
-        reject(new NullgError("runtime_error", `RPC ${method} request failed: ${error.message}`));
+        reject(new AgCliError("runtime_error", `RPC ${method} request failed: ${error.message}`));
       });
       req.write(payload);
       req.end();

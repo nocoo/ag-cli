@@ -3,7 +3,7 @@ import { inspectDaemons } from "../../infra/daemon-discovery";
 import { resolvePaths } from "../../infra/paths";
 import { StateStore } from "../../infra/state-store";
 import { openSummariesReader } from "../../infra/summaries-reader";
-import { NullgError } from "../../types/protocol";
+import { AgCliError } from "../../types/protocol";
 import { emitJson, emitText, resolveMode, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
 
@@ -27,7 +27,7 @@ export async function runStatusCommand(
 ): Promise<number> {
   const flags = parseCommandFlags(args, { booleans: ["json"], values: [] });
   if (flags.positionals.length !== 0) {
-    throw new NullgError("invalid_usage", "status takes no positional arguments");
+    throw new AgCliError("invalid_usage", "status takes no positional arguments");
   }
   const paths = resolvePaths(context.env);
 

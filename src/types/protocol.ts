@@ -34,14 +34,14 @@ export const ERROR_KIND_EXIT_CODES: Record<ErrorKind, number> = {
   timeout: EXIT_CODES.timeout,
 };
 
-export class NullgError extends Error {
+export class AgCliError extends Error {
   readonly kind: ErrorKind;
   readonly hint: string | undefined;
   readonly exitCode: number;
 
   constructor(kind: ErrorKind, message: string, options: { hint?: string; cause?: unknown } = {}) {
     super(message, { cause: options.cause });
-    this.name = "NullgError";
+    this.name = "AgCliError";
     this.kind = kind;
     this.hint = options.hint;
     this.exitCode = ERROR_KIND_EXIT_CODES[kind];

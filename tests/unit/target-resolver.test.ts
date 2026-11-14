@@ -4,7 +4,7 @@ import {
   resolveTarget,
   type TargetRegistry,
 } from "../../src/domain/target-resolver";
-import { NullgError } from "../../src/types/protocol";
+import { AgCliError } from "../../src/types/protocol";
 
 const UUID_A = "990014f6-f6d1-4567-adcf-6182cead394c";
 const UUID_B = "a464a19f-0e6a-4c5f-9d5c-1b2c3d4e5f60";
@@ -128,7 +128,7 @@ describe("resolveTarget priority (docs/02 §2)", () => {
       resolveTarget("abcdef01", state);
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as NullgError).kind).toBe("not_found");
+      expect((error as AgCliError).kind).toBe("not_found");
     }
   });
 
@@ -138,8 +138,8 @@ describe("resolveTarget priority (docs/02 §2)", () => {
       resolveTarget("a464", state);
       expect.unreachable("must throw");
     } catch (error) {
-      expect(error).toBeInstanceOf(NullgError);
-      const agError = error as NullgError;
+      expect(error).toBeInstanceOf(AgCliError);
+      const agError = error as AgCliError;
       expect(agError.kind).toBe("ambiguous_target");
       expect(agError.exitCode).toBe(1);
       expect(agError.message).toContain(UUID_B);
@@ -153,7 +153,7 @@ describe("resolveTarget priority (docs/02 §2)", () => {
       resolveTarget("ghost-worker", state);
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as NullgError).kind).toBe("not_found");
+      expect((error as AgCliError).kind).toBe("not_found");
     }
   });
 
@@ -163,7 +163,7 @@ describe("resolveTarget priority (docs/02 §2)", () => {
       resolveTarget("c99", state);
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as NullgError).kind).toBe("not_found");
+      expect((error as AgCliError).kind).toBe("not_found");
     }
   });
 
@@ -173,7 +173,7 @@ describe("resolveTarget priority (docs/02 §2)", () => {
       resolveTarget("11111111-2222-4333-8444-555566667777", state);
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as NullgError).kind).toBe("not_found");
+      expect((error as AgCliError).kind).toBe("not_found");
     }
   });
 
@@ -184,8 +184,8 @@ describe("resolveTarget priority (docs/02 §2)", () => {
         resolveTarget(bad, state);
         expect.unreachable(`must throw for ${bad}`);
       } catch (error) {
-        expect((error as NullgError).kind).toBe("invalid_usage");
-        expect((error as NullgError).exitCode).toBe(2);
+        expect((error as AgCliError).kind).toBe("invalid_usage");
+        expect((error as AgCliError).exitCode).toBe(2);
       }
     }
   });
@@ -200,7 +200,7 @@ describe("resolveTarget priority (docs/02 §2)", () => {
       resolveTarget("dead-worker", state);
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as NullgError).kind).toBe("not_found");
+      expect((error as AgCliError).kind).toBe("not_found");
     }
   });
 
@@ -242,7 +242,7 @@ describe("resolveTarget caller default (docs/02 §2)", () => {
       resolveTarget(undefined, state, { callerId: UUID_A });
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as NullgError).kind).toBe("not_found");
+      expect((error as AgCliError).kind).toBe("not_found");
     }
   });
 
@@ -252,7 +252,7 @@ describe("resolveTarget caller default (docs/02 §2)", () => {
       resolveTarget(undefined, state);
       expect.unreachable("must throw");
     } catch (error) {
-      const agError = error as NullgError;
+      const agError = error as AgCliError;
       expect(agError.kind).toBe("invalid_usage");
       expect(agError.exitCode).toBe(2);
       expect(agError.message).toContain("missing_target");
@@ -265,7 +265,7 @@ describe("resolveTarget caller default (docs/02 §2)", () => {
       resolveTarget(undefined, state, { callerId: "" });
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as NullgError).kind).toBe("invalid_usage");
+      expect((error as AgCliError).kind).toBe("invalid_usage");
     }
   });
 });

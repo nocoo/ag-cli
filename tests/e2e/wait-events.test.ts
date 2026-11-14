@@ -48,7 +48,7 @@ function spawnCli(args: string[], killAfterMs?: number): Promise<CliSpawn> {
 }
 
 beforeAll(() => {
-  instance = createSandbox("nullg-e2e-wait");
+  instance = createSandbox("ag-cli-e2e-wait");
   initSummariesDb(instance);
   writeMockAgentapi(instance);
   const created = runAgentapi(instance, ["new-conversation", "--message", "seed"]);

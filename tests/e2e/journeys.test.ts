@@ -18,7 +18,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const cliBin = join(process.cwd(), "dist", "index.js");
-const outsideCwd = mkdtempSync(join(tmpdir(), "nullg-journey-"));
+const outsideCwd = mkdtempSync(join(tmpdir(), "ag-cli-journey-"));
 
 let instance: Sandbox;
 let server: MockLanguageServer;
@@ -49,7 +49,7 @@ async function runCli(
 }
 
 beforeAll(async () => {
-  instance = createSandbox("nullg-e2e-journey");
+  instance = createSandbox("ag-cli-e2e-journey");
   initSummariesDb(instance);
   writeMockAgentapi(instance);
   server = await startMockLanguageServer({ responses: { CancelCascadeInvocation: {} } });
@@ -76,11 +76,11 @@ describe("full user journeys against the built cli from an unrelated cwd", () =>
   it("serves the skill manual, schema and template catalog", async () => {
     const skill = await runCli(["--skill"]);
     expect(skill.status).toBe(0);
-    expect(skill.stdout).toContain("# nullg manual");
+    expect(skill.stdout).toContain("# ag-cli manual");
 
     const schema = await runCli(["schema"]);
     expect(schema.status).toBe(0);
-    expect(JSON.parse(schema.stdout)).toMatchObject({ title: "nullg" });
+    expect(JSON.parse(schema.stdout)).toMatchObject({ title: "ag-cli" });
 
     const templates = await runCli(["templates", "--json"]);
     expect(templates.status).toBe(0);
@@ -130,7 +130,7 @@ describe("full user journeys against the built cli from an unrelated cwd", () =>
 
     const read = await runCli(["read", "ui-check"]);
     expect(read.status).toBe(0);
-    expect(read.stdout).toContain("Mock reply for: <nullg cwd=");
+    expect(read.stdout).toContain("Mock reply for: <ag-cli cwd=");
     expect(read.stdout).toContain("You are a dedicated browser QA verifier.");
     expect(read.stdout).toContain("Verify login flow on http://localhost:3000");
   });

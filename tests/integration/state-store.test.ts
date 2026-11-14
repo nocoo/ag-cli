@@ -6,7 +6,7 @@ import { createSandbox, initSummariesDb, type Sandbox } from "../helpers/sandbox
 const active: Sandbox[] = [];
 
 function sandbox(): Sandbox {
-  const created = createSandbox("nullg-int-state");
+  const created = createSandbox("ag-cli-int-state");
   active.push(created);
   return created;
 }
@@ -23,7 +23,7 @@ const UUID_B = "22222222-2222-4222-8222-222222222222";
 describe("StateStore under real sqlite", () => {
   it("supports concurrent reader connections in WAL mode while a writer holds data", () => {
     const instance = sandbox();
-    const path = join(instance.nullgHome, "state.db");
+    const path = join(instance.agCliHome, "state.db");
     const writer = StateStore.open(path, { create: true });
     writer?.registerConversation(UUID_A, { name: "alpha" });
     writer?.setLabels(UUID_A, ["task=deps"]);
@@ -41,7 +41,7 @@ describe("StateStore under real sqlite", () => {
 
   it("enforces the labels foreign key with deletes rejected for unknown conversations", () => {
     const instance = sandbox();
-    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
     try {
       expect(() =>
         store?.rawExec(
@@ -56,7 +56,7 @@ describe("StateStore under real sqlite", () => {
 
   it("rolls back deliveries only when the ticket still owns the sequence", () => {
     const instance = sandbox();
-    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
     try {
       store.registerConversation(UUID_A, {});
       const ticket = store.beginDelivery(UUID_A, 5);
@@ -77,7 +77,7 @@ describe("StateStore under real sqlite", () => {
   it("persists across reopen alongside the summaries database", () => {
     const instance = sandbox();
     initSummariesDb(instance);
-    const path = join(instance.nullgHome, "state.db");
+    const path = join(instance.agCliHome, "state.db");
     const first = StateStore.open(path, { create: true });
     first?.registerConversation(UUID_A, { name: "alpha", cwd: "/tmp/repo", model: "flash" });
     first?.beginDelivery(UUID_A, 3);

@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
-import { NullgError } from "../types/protocol";
+import { AgCliError } from "../types/protocol";
 
 export function assertInside(
   root: string,
@@ -9,7 +9,7 @@ export function assertInside(
 ): string {
   const absoluteTarget = resolve(target);
   if (options.mustExist && !existsSync(absoluteTarget)) {
-    throw new NullgError("not_found", `path ${target} does not exist`, {
+    throw new AgCliError("not_found", `path ${target} does not exist`, {
       hint: options.hint ?? "Paths must stay inside the expected directory.",
     });
   }
@@ -18,7 +18,7 @@ export function assertInside(
     ? realpathSync(absoluteTarget)
     : resolve(realRoot, relative(root, absoluteTarget));
   if (realTarget !== realRoot && !realTarget.startsWith(`${realRoot}${sep}`)) {
-    throw new NullgError("invalid_usage", `path ${target} escapes ${root}`, {
+    throw new AgCliError("invalid_usage", `path ${target} escapes ${root}`, {
       hint: options.hint ?? "Paths must stay inside the expected directory.",
     });
   }

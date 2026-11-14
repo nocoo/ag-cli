@@ -44,7 +44,7 @@ async function runCli(
 }
 
 beforeAll(() => {
-  instance = createSandbox("nullg-e2e-readonly");
+  instance = createSandbox("ag-cli-e2e-readonly");
   initSummariesDb(instance);
   writeMockAgentapi(instance);
   const created = runAgentapi(instance, [

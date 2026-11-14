@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
-import { NullgError } from "../types/protocol";
+import { AgCliError } from "../types/protocol";
 
 export interface DaemonCandidate {
   hubFile: string;
@@ -192,7 +192,7 @@ export async function discoverDaemon(
         `${candidate.hubFile}: ${candidate.parseError ?? (candidate.pidAlive ? "unreachable /healthz" : "dead pid")}`,
     );
     const detail = reasons.length > 0 ? ` Checked: ${reasons.join("; ")}.` : "";
-    throw new NullgError(
+    throw new AgCliError(
       "daemon_unavailable",
       `no healthy Antigravity language_server daemon found.${detail}`,
       {

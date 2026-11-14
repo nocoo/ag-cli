@@ -15,7 +15,7 @@ const active: Sandbox[] = [];
 const servers: Array<{ close(): Promise<void> }> = [];
 
 function sandbox(): Sandbox {
-  const created = createSandbox("nullg-int-agentapi");
+  const created = createSandbox("ag-cli-int-agentapi");
   active.push(created);
   return created;
 }

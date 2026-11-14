@@ -24,9 +24,10 @@ export function resolvePaths(
   env: PathEnv = process.env,
   homeDir: string = homedir(),
 ): ResolvedPaths {
-  const agHome = pick(env, "NULLG_HOME") ?? join(homeDir, ".local/share/nullg");
-  const configDir = pick(env, "NULLG_CONFIG_DIR") ?? join(homeDir, ".config/nullg");
-  const antigravityDir = pick(env, "NULLG_ANTIGRAVITY_DIR") ?? join(homeDir, ".gemini/antigravity");
+  const agHome = pick(env, "AG_CLI_HOME") ?? join(homeDir, ".local/share/ag-cli");
+  const configDir = pick(env, "AG_CLI_CONFIG_DIR") ?? join(homeDir, ".config/ag-cli");
+  const antigravityDir =
+    pick(env, "AG_CLI_ANTIGRAVITY_DIR") ?? join(homeDir, ".gemini/antigravity");
 
   return {
     homeDir: agHome,
@@ -37,10 +38,10 @@ export function resolvePaths(
     daemonDir: join(antigravityDir, "daemon"),
     summariesDbPath: join(antigravityDir, "conversation_summaries.db"),
     brainDir: join(antigravityDir, "brain"),
-    agentapiBin: pick(env, "NULLG_AGENTAPI_BIN") ?? join(antigravityDir, "bin/agentapi"),
+    agentapiBin: pick(env, "AG_CLI_AGENTAPI_BIN") ?? join(antigravityDir, "bin/agentapi"),
   };
 }
 
 export function resolveCallerId(env: PathEnv = process.env): string | undefined {
-  return pick(env, "NULLG_CALLER_ID") ?? pick(env, "ANTIGRAVITY_CONVERSATION_ID");
+  return pick(env, "AG_CLI_CALLER_ID") ?? pick(env, "ANTIGRAVITY_CONVERSATION_ID");
 }

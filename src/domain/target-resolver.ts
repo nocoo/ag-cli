@@ -1,4 +1,4 @@
-import { type ErrorKind, NullgError } from "../types/protocol";
+import { AgCliError, type ErrorKind } from "../types/protocol";
 
 export interface ManagedConversation {
   shortId: number;
@@ -32,7 +32,7 @@ const HEX_PREFIX_RE = /^[0-9a-f]{4,}$/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function fail(kind: ErrorKind, message: string, hint?: string): never {
-  throw new NullgError(kind, message, { hint });
+  throw new AgCliError(kind, message, { hint });
 }
 
 export function resolveTarget(

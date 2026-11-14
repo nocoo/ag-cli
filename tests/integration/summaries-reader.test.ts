@@ -14,7 +14,7 @@ import {
 const active: Sandbox[] = [];
 
 function sandbox(): Sandbox {
-  const created = createSandbox("nullg-int-summaries");
+  const created = createSandbox("ag-cli-int-summaries");
   active.push(created);
   return created;
 }

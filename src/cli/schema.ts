@@ -322,9 +322,9 @@ function commandSchema(
 
 export const CLI_SCHEMA = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
-  $id: "https://nullg.local/schema.json",
-  title: "nullg",
-  description: "Interfaces and JSON payload contracts for nullg.",
+  $id: "https://ag-cli.local/schema.json",
+  title: "ag-cli",
+  description: "Interfaces and JSON payload contracts for ag-cli.",
   type: "object",
   additionalProperties: false,
   properties: {

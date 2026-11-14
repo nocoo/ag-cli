@@ -12,7 +12,7 @@ import {
 const active: Sandbox[] = [];
 
 function sandbox(): Sandbox {
-  const created = createSandbox("nullg-int-daemon");
+  const created = createSandbox("ag-cli-int-daemon");
   active.push(created);
   return created;
 }

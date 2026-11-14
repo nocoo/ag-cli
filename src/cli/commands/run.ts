@@ -8,7 +8,7 @@ import { AgentApiClient } from "../../infra/agentapi-client";
 import { resolvePaths } from "../../infra/paths";
 import { StateStore } from "../../infra/state-store";
 import { openSummariesReader } from "../../infra/summaries-reader";
-import { NullgError } from "../../types/protocol";
+import { AgCliError } from "../../types/protocol";
 import { emitJson, emitText, resolveMode, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
 import { awaitSettledStatus } from "./await-settled";
@@ -37,7 +37,7 @@ function callerWithContext(caller: CallerContext | null, store: StateStore): Cal
   if (caller === null) {
     return null;
   }
-  if (caller.kind !== "nullg") {
+  if (caller.kind !== "ag-cli") {
     return caller;
   }
   const row = store.findByConversationId(caller.conversationId);
@@ -78,12 +78,12 @@ export async function runRunCommand(
     repeatables: ["label"],
   });
   if (flags.positionals.length === 0) {
-    throw new NullgError("invalid_usage", "run requires a prompt");
+    throw new AgCliError("invalid_usage", "run requires a prompt");
   }
   let prompt = flags.positionals[0] as string;
   let templateDefaults: ParsedTemplate | undefined;
   if (flags.positionals.length > 2) {
-    throw new NullgError("invalid_usage", "run accepts at most a template and a prompt");
+    throw new AgCliError("invalid_usage", "run accepts at most a template and a prompt");
   }
   if (flags.positionals.length > 1) {
     const templateName = flags.positionals[0] as string;
@@ -95,13 +95,13 @@ export async function runRunCommand(
     assertAlias(name);
   }
   if (flags.flags.has("reuse") && name === undefined) {
-    throw new NullgError("invalid_usage", "--reuse requires --name");
+    throw new AgCliError("invalid_usage", "--reuse requires --name");
   }
   const timeoutSec = parseTimeout(flags.values.get("timeout"));
   const labelPairs = flags.repeatable.get("label") ?? [];
   for (const pair of labelPairs) {
     if (pair.indexOf("=") < 1) {
-      throw new NullgError("invalid_usage", `invalid label ${pair}`, {
+      throw new AgCliError("invalid_usage", `invalid label ${pair}`, {
         hint: "Use --label key=value.",
       });
     }
@@ -125,7 +125,7 @@ export async function runRunCommand(
         store,
         context.env,
       );
-    } else if (caller?.kind === "nullg") {
+    } else if (caller?.kind === "ag-cli") {
       parentId = caller.conversationId;
     } else if (caller?.kind === "hc") {
       parentId = `hc:${caller.terminalId}`;
@@ -168,12 +168,12 @@ export async function runRunCommand(
       } else {
         const holder = store.listManaged().find((row) => row.name === name);
         if (holder !== undefined) {
-          throw new NullgError("name_conflict", `name ${name} is already in use`, {
-            hint: "Pick another name, use --reuse, or nullg rm the old conversation.",
+          throw new AgCliError("name_conflict", `name ${name} is already in use`, {
+            hint: "Pick another name, use --reuse, or ag-cli rm the old conversation.",
           });
         }
         if (!store.acquireNameReservation(name, reservationToken)) {
-          throw new NullgError("name_conflict", `name ${name} is already being created`, {
+          throw new AgCliError("name_conflict", `name ${name} is already being created`, {
             hint: "Another run is creating this name right now; retry shortly.",
           });
         }
@@ -236,7 +236,7 @@ export async function runRunCommand(
     if (flags.flags.has("reuse") && name !== undefined && !reservationHeld) {
       // no active conversation holds the name and another process still owns the
       // reservation: dispatching here would duplicate the in-flight creation
-      throw new NullgError("name_conflict", `name ${name} is still being created by another run`, {
+      throw new AgCliError("name_conflict", `name ${name} is still being created by another run`, {
         hint: "Retry once the other run finishes, or pick another name.",
       });
     }
@@ -344,7 +344,7 @@ async function finishRun(options: {
           summary.name === null
             ? `, ${summary.conversationId.slice(0, 8)}`
             : ` (${summary.name}, ${summary.conversationId.slice(0, 8)})`;
-        emitText(context.stderr, `[nullg] still working as ${label}${named}`);
+        emitText(context.stderr, `[ag-cli] still working as ${label}${named}`);
       }
       return 124;
     }
@@ -377,7 +377,7 @@ function parseTimeout(raw: string | undefined): number {
   }
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 0) {
-    throw new NullgError("invalid_usage", `--timeout expects a non-negative integer, got ${raw}`);
+    throw new AgCliError("invalid_usage", `--timeout expects a non-negative integer, got ${raw}`);
   }
   return value;
 }

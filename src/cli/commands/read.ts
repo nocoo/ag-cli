@@ -11,7 +11,7 @@ import { assertInside } from "../../infra/path-safety";
 import { resolvePaths } from "../../infra/paths";
 import { StateStore } from "../../infra/state-store";
 import { openSummariesReader } from "../../infra/summaries-reader";
-import { NullgError } from "../../types/protocol";
+import { AgCliError } from "../../types/protocol";
 import { emitJson, emitText, resolveMode, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
 import {
@@ -59,7 +59,7 @@ export async function runReadCommand(
     values: ["turns", "lines", "artifact"],
   });
   if (flags.positionals.length > 1) {
-    throw new NullgError("invalid_usage", "read accepts at most one target");
+    throw new AgCliError("invalid_usage", "read accepts at most one target");
   }
   const turnsLimit = parsePositiveInt(flags.values.get("turns"), 1, "turns");
   const linesLimit = parsePositiveInt(flags.values.get("lines"), 50, "lines");
@@ -80,7 +80,7 @@ export async function runReadCommand(
       });
       const path = join(conversationDir, name);
       if (!existsSync(path)) {
-        throw new NullgError("not_found", `artifact ${name} not found in ${target.conversationId}`);
+        throw new AgCliError("not_found", `artifact ${name} not found in ${target.conversationId}`);
       }
       assertInside(conversationDir, path, {
         mustExist: true,
@@ -172,7 +172,7 @@ function parsePositiveInt(raw: string | undefined, fallback: number, name: strin
   }
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 1) {
-    throw new NullgError("invalid_usage", `--${name} expects a positive integer, got ${raw}`);
+    throw new AgCliError("invalid_usage", `--${name} expects a positive integer, got ${raw}`);
   }
   return value;
 }

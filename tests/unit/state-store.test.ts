@@ -3,19 +3,19 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { StateStore } from "../../src/infra/state-store";
-import type { NullgError } from "../../src/types/protocol";
+import type { AgCliError } from "../../src/types/protocol";
 import { createSandbox, type Sandbox } from "../helpers/sandbox";
 
 const active: Sandbox[] = [];
 
 function sandbox(): Sandbox {
-  const created = createSandbox("nullg-unit-state");
+  const created = createSandbox("ag-cli-unit-state");
   active.push(created);
   return created;
 }
 
 function statePath(instance: Sandbox): string {
-  return join(instance.nullgHome, "state.db");
+  return join(instance.agCliHome, "state.db");
 }
 
 afterEach(() => {
@@ -32,7 +32,7 @@ describe("StateStore.open", () => {
 
   it("creates the parent directory and schema with create: true", () => {
     const instance = sandbox();
-    const path = join(instance.nullgHome, "nested", "state.db");
+    const path = join(instance.agCliHome, "nested", "state.db");
     const store = StateStore.open(path, { create: true });
     expect(store).not.toBeNull();
     try {
@@ -102,8 +102,8 @@ describe("registerConversation", () => {
           store?.registerConversation("11111111-1111-4111-8111-111111111111", { name: bad });
           expect.unreachable(`must throw for ${bad}`);
         } catch (error) {
-          expect((error as NullgError).kind).toBe("invalid_usage");
-          expect((error as NullgError).exitCode).toBe(2);
+          expect((error as AgCliError).kind).toBe("invalid_usage");
+          expect((error as AgCliError).exitCode).toBe(2);
         }
       }
     } finally {
@@ -120,8 +120,8 @@ describe("registerConversation", () => {
         store?.registerConversation("22222222-2222-4222-8222-222222222222", { name: "alpha" });
         expect.unreachable("must throw");
       } catch (error) {
-        expect((error as NullgError).kind).toBe("name_conflict");
-        expect((error as NullgError).exitCode).toBe(1);
+        expect((error as AgCliError).kind).toBe("name_conflict");
+        expect((error as AgCliError).exitCode).toBe(1);
       }
     } finally {
       store?.close();
@@ -137,7 +137,7 @@ describe("registerConversation", () => {
         store?.registerConversation("22222222-2222-4222-8222-222222222222", { name: "alpha" });
         expect.unreachable("must throw");
       } catch (error) {
-        expect((error as NullgError).kind).toBe("name_conflict");
+        expect((error as AgCliError).kind).toBe("name_conflict");
       }
       store?.markTerminated("11111111-1111-4111-8111-111111111111");
       expect(store?.findByConversationId("11111111-1111-4111-8111-111111111111")?.name).toBeNull();
@@ -225,19 +225,19 @@ describe("queries and mutations", () => {
         store?.setLabels(id, ["no-separator"]);
         expect.unreachable("must throw");
       } catch (error) {
-        expect((error as NullgError).kind).toBe("invalid_usage");
+        expect((error as AgCliError).kind).toBe("invalid_usage");
       }
       try {
         store?.setLabels(id, ["=v"]);
         expect.unreachable("must throw");
       } catch (error) {
-        expect((error as NullgError).kind).toBe("invalid_usage");
+        expect((error as AgCliError).kind).toBe("invalid_usage");
       }
       try {
         store?.setLabels("99999999-9999-4999-8999-999999999999", ["a=b"]);
         expect.unreachable("must throw");
       } catch (error) {
-        expect((error as NullgError).kind).toBe("not_found");
+        expect((error as AgCliError).kind).toBe("not_found");
       }
     } finally {
       store?.close();

@@ -1,4 +1,4 @@
-import { NullgError } from "../types/protocol";
+import { AgCliError } from "../types/protocol";
 
 export interface StreamLike {
   write(chunk: string): boolean;
@@ -29,7 +29,7 @@ export function emitText(stream: StreamLike, text: string): void {
 export function errorPayload(error: unknown): {
   error: { kind: string; message: string; hint?: string };
 } {
-  if (error instanceof NullgError) {
+  if (error instanceof AgCliError) {
     return {
       error: {
         kind: error.kind,
@@ -48,7 +48,7 @@ export function emitError(stream: StreamLike, error: unknown, mode: OutputMode):
     return;
   }
   const payload = errorPayload(error).error;
-  emitText(stream, `nullg: ${payload.message}`);
+  emitText(stream, `ag-cli: ${payload.message}`);
   if (payload.hint !== undefined) {
     emitText(stream, `hint: ${payload.hint}`);
   }

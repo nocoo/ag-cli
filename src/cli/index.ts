@@ -1,4 +1,4 @@
-import { NullgError } from "../types/protocol";
+import { AgCliError } from "../types/protocol";
 import { runControlCommand } from "./commands/control";
 import { runEventsCommand } from "./commands/events";
 import { runGetCommand } from "./commands/get";
@@ -27,9 +27,9 @@ export interface ParsedFlags {
   positionals: string[];
 }
 
-const USAGE = `nullg - dispatch tasks to local Antigravity conversations and collect results
+const USAGE = `ag-cli - dispatch tasks to local Antigravity conversations and collect results
 
-Usage: nullg <command> [options]
+Usage: ag-cli <command> [options]
 
 Conversations
   run [prompt]                Start (or --reuse) a conversation and wait (--bg: don't wait)
@@ -48,14 +48,14 @@ Talk & Wait
 More
   status                      Inspect Antigravity daemon, database, and agentapi health
   events                      Follow state and step changes live (JSON Lines when piped)
-  templates                   List templates (~/.config/nullg/templates)
+  templates                   List templates (~/.config/ag-cli/templates)
   schema                      Print the CLI/API JSON Schema
 
-Run nullg --skill for the embedded agent manual.
+Run ag-cli --skill for the embedded agent manual.
 
 <c> is a target like c7, a name (clip-worker), a UUID prefix, or a full UUID.
 Piped output is JSON except run (text summary) and read (Markdown reply).
-Use nullg --help to list commands.`;
+Use ag-cli --help to list commands.`;
 
 export function parseCommandFlags(
   args: string[],
@@ -87,7 +87,7 @@ export function parseCommandFlags(
       } else if (spec.values.includes(name) || (spec.repeatables ?? []).includes(name)) {
         const value = args[index + 1];
         if (value === undefined || value.startsWith("--")) {
-          throw new NullgError("invalid_usage", `--${name} expects a value`);
+          throw new AgCliError("invalid_usage", `--${name} expects a value`);
         }
         if (spec.values.includes(name)) {
           values.set(name, value);
@@ -98,7 +98,7 @@ export function parseCommandFlags(
         }
         skipNext = true;
       } else {
-        throw new NullgError("invalid_usage", `unknown option --${name}`);
+        throw new AgCliError("invalid_usage", `unknown option --${name}`);
       }
     } else {
       positionals.push(arg);
@@ -132,7 +132,7 @@ export async function runCli(argv: string[], context: CliContext): Promise<numbe
       if (mode === "json") {
         emitError(
           context.stderr,
-          new NullgError("invalid_usage", "missing command", { hint: "Run nullg --help." }),
+          new AgCliError("invalid_usage", "missing command", { hint: "Run ag-cli --help." }),
           "json",
         );
       } else {
@@ -146,7 +146,7 @@ export async function runCli(argv: string[], context: CliContext): Promise<numbe
       if (flagArgs.includes("--help") || flagArgs.includes("-h")) {
         emitText(
           context.stdout,
-          `Usage: nullg ${command} [options]\n\nRun nullg --help for the full command list.`,
+          `Usage: ag-cli ${command} [options]\n\nRun ag-cli --help for the full command list.`,
         );
         return 0;
       }
@@ -184,8 +184,8 @@ export async function runCli(argv: string[], context: CliContext): Promise<numbe
     if (command === "interrupt" || command === "kill" || command === "rm") {
       return await runControlCommand(command, args, context);
     }
-    throw new NullgError("invalid_usage", `unknown command ${command}`, {
-      hint: "Run nullg --help.",
+    throw new AgCliError("invalid_usage", `unknown command ${command}`, {
+      hint: "Run ag-cli --help.",
     });
   } catch (error) {
     const mode = resolveMode({
@@ -194,6 +194,6 @@ export async function runCli(argv: string[], context: CliContext): Promise<numbe
       pipedIsJson: true,
     });
     emitError(context.stderr, error, mode);
-    return error instanceof NullgError ? error.exitCode : 1;
+    return error instanceof AgCliError ? error.exitCode : 1;
   }
 }

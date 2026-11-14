@@ -1,7 +1,7 @@
 import { resolvePaths } from "../../infra/paths";
 import { StateStore } from "../../infra/state-store";
 import { type ConversationSummaryRow, openSummariesReader } from "../../infra/summaries-reader";
-import { NullgError } from "../../types/protocol";
+import { AgCliError } from "../../types/protocol";
 import { emitJson, emitText, renderTable, resolveMode, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
 import { type ConversationObservation, currentCallerId, observeConversation } from "./registry";
@@ -43,7 +43,7 @@ export async function runLsCommand(
     repeatables: ["label"],
   });
   if (flags.positionals.length !== 0) {
-    throw new NullgError("invalid_usage", "ls takes no positional arguments");
+    throw new AgCliError("invalid_usage", "ls takes no positional arguments");
   }
   const paths = resolvePaths(context.env);
   const reader = openSummariesReader(paths.summariesDbPath);
@@ -78,7 +78,7 @@ export async function runLsCommand(
     const labelFilters = flags.repeatable.get("label") ?? [];
     for (const pair of labelFilters) {
       if (pair.indexOf("=") < 1) {
-        throw new NullgError("invalid_usage", `invalid --label ${pair}`, {
+        throw new AgCliError("invalid_usage", `invalid --label ${pair}`, {
           hint: "Use --label key=value.",
         });
       }
@@ -86,11 +86,11 @@ export async function runLsCommand(
 
     const callerId = flags.flags.has("children") ? currentCallerId(context.env) : undefined;
     if (flags.flags.has("children") && callerId === undefined) {
-      throw new NullgError(
+      throw new AgCliError(
         "invalid_usage",
         "missing_target: --children needs a caller conversation",
         {
-          hint: "Run inside an Antigravity conversation or set NULLG_CALLER_ID.",
+          hint: "Run inside an Antigravity conversation or set AG_CLI_CALLER_ID.",
         },
       );
     }
@@ -100,7 +100,7 @@ export async function runLsCommand(
       statusFilter !== undefined &&
       !["idle", "working", "done", "blocked", "error"].includes(statusFilter)
     ) {
-      throw new NullgError(
+      throw new AgCliError(
         "invalid_usage",
         `--status expects idle|working|done|blocked|error, got ${statusFilter}`,
       );
