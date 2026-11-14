@@ -134,7 +134,9 @@ CREATE INDEX IF NOT EXISTS idx_labels_kv ON labels(key, value);
 ```
 
 ### 5.3 Antigravity `conversation_summaries.db` 只读访问约定
-- 统一通过 Node/Bun 原生 `import { DatabaseSync } from "node:sqlite"` 打开只读连接（`new DatabaseSync(path, { readOnly: true })`），并设置 `PRAGMA busy_timeout = 3000`。
+- 统一通过 Node/Bun 原生 `import { DatabaseSync } from "node:sqlite"` 打开连接，并设置 `PRAGMA busy_timeout = 3000` 与 `PRAGMA query_only = ON` 实现**引擎级只读**。
+  - 实现说明：`readOnly: true` 文件级只读连接在 Bun 运行时对「无活跃写连接、因而缺少 `-shm` 文件」的 WAL 库会在查询阶段报 `unable to open database file`；`PRAGMA query_only = ON` 在 Node 与 Bun 下行为一致，且同样拒绝一切写入。
+  - 该偏差只涉及连接打开方式，"绝不写入 Antigravity 原生库" 的约束由 `query_only` 在 SQLite 引擎层强制保证。
 - `ag-cli` **绝对禁止**向 `conversation_summaries.db` 或 `conversations/<id>.db` 执行任何 `INSERT`/`UPDATE`/`DELETE` 写入操作，以免破坏 Antigravity `language_server` 的内部事务锁或状态一致性。
 
 ---

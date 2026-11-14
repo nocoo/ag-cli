@@ -65,3 +65,32 @@ broke. Fix: `SummariesReader` now opens normally and enforces read-only with
 Registering the name in `state.db` after `newConversation` meant a `name_conflict`
 throw left a freshly created Antigravity conversation unmanaged (orphan) that leaked
 into `ls`. Fix: `run.ts` pre-checks name availability before contacting the daemon.
+
+## 2026-11-14 · FSEvents can be silent under load — the fallback timer is the contract (Phase 3.1)
+
+`fs.watch` on macOS (FSEvents) occasionally delivers no event for seconds while the
+vitest worker is saturated, which made watcher tests flaky. Fixes: tests that only
+assert "the change is noticed" must enable the stat-based fallback timer (the same
+mechanism docs/03 §4.3 prescribes), and debounce assertions must tolerate a merged
+batch instead of demanding exactly one callback. The watcher keeps both paths: the
+20ms debounce for latency, the fallback for correctness.
+
+## 2026-11-14 · `PRAGMA data_version` is only visible on a long-lived connection (Phase 3.1)
+
+Opening a fresh `DatabaseSync` for every fallback check always reports the same
+`data_version`, so summaries-change detection never fired. The watcher now keeps one
+query-only probe connection open and polls `PRAGMA data_version` on it — the pattern
+the SQLite docs describe.
+
+## 2026-11-14 · Incremental readers must pick one offset strategy (Phase 3.1)
+
+Mixing "offset points at the last complete line" with "prepend the buffered partial
+line" duplicated the partial bytes and corrupted every completed line. The watcher
+now advances the offset to the file size and keeps the partial line as a string
+buffer, so chunks are never re-read.
+
+## 2026-11-14 · `--skill` must not depend on the process cwd (Phase 4.1)
+
+`ag-cli --skill` reads `skill.md` relative to `import.meta.url`, and the build copies
+the file next to `dist/index.js`. The manual therefore works from any directory and
+inside the packed tarball; `scripts/check-package.ts` smoke-tests it after install.
