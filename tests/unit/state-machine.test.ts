@@ -197,6 +197,23 @@ describe("priority 5: idle (docs/03 §2)", () => {
     expect(deriveConversationStatus(facts())).toBe("idle");
   });
 
+  it("treats typeless steps as non-inbound in error recovery and reply scans", () => {
+    const errorSteps = [
+      step({ step_index: 0, type: "USER_INPUT" }),
+      { step_index: 1, status: "ERROR" } as TranscriptStep,
+    ];
+    expect(deriveConversationStatus(facts({ summary: IDLE, steps: errorSteps }))).toBe("error");
+
+    const doneSteps = [
+      step({ step_index: 0, type: "USER_INPUT" }),
+      { step_index: 1 } as TranscriptStep,
+      step({ step_index: 2, type: "PLANNER_RESPONSE", status: "DONE" }),
+    ];
+    expect(
+      deriveConversationStatus(facts({ summary: IDLE, steps: doneSteps, watermarkStep: 0 })),
+    ).toBe("done");
+  });
+
   it("treats an unreached watermark 0 on an empty transcript as working (delivery race)", () => {
     expect(deriveConversationStatus(facts({ summary: IDLE, watermarkStep: 0 }))).toBe("working");
   });

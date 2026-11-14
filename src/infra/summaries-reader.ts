@@ -56,7 +56,8 @@ export class SummariesReader {
     if (!existsSync(dbPath)) {
       return null;
     }
-    const db = new DatabaseSync(dbPath, { readOnly: true });
+    const db = new DatabaseSync(dbPath);
+    db.exec("PRAGMA query_only = ON;");
     db.exec("PRAGMA busy_timeout = 3000;");
     return new SummariesReader(db);
   }

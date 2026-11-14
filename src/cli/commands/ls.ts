@@ -51,6 +51,9 @@ export async function runLsCommand(
     const managedRows = showAll ? allManaged : allManaged.filter((row) => row.terminated === 0);
     const summaryRows = reader === null ? [] : reader.listConversations();
     const seen = new Set<string>(allManaged.map((row) => row.conversationId));
+    const terminatedIds = new Set(
+      allManaged.filter((row) => row.terminated === 1).map((row) => row.conversationId),
+    );
     const candidates: Array<{ conversationId: string; summary?: ConversationSummaryRow }> = [];
     for (const row of managedRows) {
       seen.add(row.conversationId);
@@ -63,7 +66,7 @@ export async function runLsCommand(
       if (seen.has(row.conversation_id)) {
         continue;
       }
-      if (row.killed === 1 && !showAll) {
+      if (!showAll && (row.killed === 1 || terminatedIds.has(row.conversation_id))) {
         continue;
       }
       candidates.push({ conversationId: row.conversation_id, summary: row });

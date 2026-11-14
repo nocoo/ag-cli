@@ -81,6 +81,23 @@ describe("resolveTarget priority (docs/02 §2)", () => {
     });
   });
 
+  it("attaches no alias when managed rows lack names", () => {
+    const state = registry({
+      managed: [managed({ shortId: 4, conversationId: UUID_A })],
+      summaryIds: [UUID_A],
+    });
+    expect(resolveTarget("c4", state)).toEqual({
+      conversationId: UUID_A,
+      via: "shortId",
+      shortId: 4,
+    });
+    expect(resolveTarget(UUID_A, state)).toEqual({
+      conversationId: UUID_A,
+      via: "uuid",
+      shortId: 4,
+    });
+  });
+
   it("resolves a unique uuid hex prefix across summaries and brain", () => {
     const state = registry({ summaryIds: [UUID_A], brainIds: [UUID_B] });
     expect(resolveTarget("990014f6", state)).toEqual({

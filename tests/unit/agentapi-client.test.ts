@@ -214,6 +214,23 @@ describe("agentapi subprocess wrappers", () => {
     }
   });
 
+  it("fails clearly when the agentapi binary exits silently", async () => {
+    const instance = sandbox();
+    initSummariesDb(instance);
+    writeMockAgentapi(instance);
+    const client = await connectedClient(instance);
+    writeFileSync(instance.agentapiBin, "#!/usr/bin/env node\nprocess.exit(1);\n", {
+      mode: 0o755,
+    });
+    try {
+      await client.sendMessage("11111111-1111-4111-8111-111111111111", "x");
+      expect.unreachable("must throw");
+    } catch (error) {
+      expect((error as AgCliError).kind).toBe("runtime_error");
+      expect((error as AgCliError).message).not.toContain("undefined");
+    }
+  });
+
   it("rejects newConversation without title or profile flags", async () => {
     const instance = sandbox();
     initSummariesDb(instance);
@@ -283,6 +300,7 @@ describe("Connect RPC helpers", () => {
           projects: [
             { projectId: "proj-a", folderUri: "file:///tmp/repo-a" },
             { projectId: "proj-b", folderUri: "/tmp/repo-b" },
+            { projectId: "proj-c" },
           ],
         },
       },

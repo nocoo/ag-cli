@@ -51,11 +51,15 @@ export class AgentApiClient {
 
   private childEnv(): Record<string, string> {
     const env: Record<string, string> = {};
-    for (const [key, value] of Object.entries(this.baseEnv)) {
-      if (typeof value === "string") {
-        env[key] = value;
+    const apply = (source: Record<string, string | undefined>): void => {
+      for (const [key, value] of Object.entries(source)) {
+        if (typeof value === "string") {
+          env[key] = value;
+        }
       }
-    }
+    };
+    apply(process.env);
+    apply(this.baseEnv);
     env.ANTIGRAVITY_LS_ADDRESS = `127.0.0.1:${this.daemon.httpPort}`;
     env.ANTIGRAVITY_CSRF_TOKEN = this.daemon.csrfToken;
     if (this.projectId !== undefined && this.projectId.length > 0) {
@@ -127,17 +131,15 @@ export class AgentApiClient {
       args.push("--title", options.title);
     }
     const payload = await this.runAgentapi(args);
-    return {
-      conversationId,
-      ...(typeof payload.stepIndex === "number" ? { stepIndex: payload.stepIndex } : {}),
-    };
+    const stepIndex = payload.stepIndex;
+    return { conversationId, ...(typeof stepIndex === "number" ? { stepIndex } : {}) };
   }
 
   async getConversationMetadata(conversationId: string): Promise<Record<string, unknown>> {
     return this.runAgentapi(["get-conversation-metadata", "--conversation-id", conversationId]);
   }
 
-  private async rpc<T>(method: string, body: unknown): Promise<T> {
+  private async rpc<T>(method: string, body: Record<string, unknown>): Promise<T> {
     const url = `http://127.0.0.1:${this.daemon.httpPort}/exa.language_server_pb.LanguageServerService/${method}`;
     let response: Response;
     try {
@@ -147,7 +149,7 @@ export class AgentApiClient {
           "content-type": "application/json",
           "x-codeium-csrf-token": this.daemon.csrfToken,
         },
-        body: JSON.stringify(body ?? {}),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(5000),
       });
     } catch (error) {

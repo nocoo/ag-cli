@@ -288,6 +288,25 @@ describe("state-backed conversations", () => {
     });
   });
 
+  it("reflects summary parents for unmanaged reads", async () => {
+    const instance = sandbox();
+    const parentId = "1a1a1a1a-1a1a-41a1-81a1-1a1a1a1a1a1a";
+    const db = initSummariesDb(instance);
+    db.prepare(
+      "INSERT INTO conversation_summaries (conversation_id, title, parent_conversation_id, last_modified_time) VALUES (?, ?, ?, ?)",
+    ).run(
+      "1b1b1b1b-1b1b-41b1-81b1-1b1b1b1b1b1b",
+      "unmanaged child",
+      parentId,
+      "2026-11-14T10:00:00Z",
+    );
+    db.close();
+
+    const ctx = context(false, instance.env);
+    await runCli(["read", "1b1b1b1b", "--json"], ctx);
+    expect(stdoutJson<{ parentId: string | null }>(ctx).parentId).toBe(parentId);
+  });
+
   it("reports managed counts in status", async () => {
     const instance = sandbox();
     const conversationId = await prepareConversation(instance);

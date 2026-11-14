@@ -63,7 +63,7 @@ export async function runReadCommand(
     });
 
     if (flags.values.has("artifact")) {
-      const name = flags.values.get("artifact") ?? "";
+      const name = flags.values.get("artifact") as string;
       const path = join(paths.brainDir, target.conversationId, name);
       if (!existsSync(path)) {
         throw new AgCliError("not_found", `artifact ${name} not found in ${target.conversationId}`);

@@ -145,10 +145,7 @@ export class StateStore {
         now,
       );
     const row = this.findByConversationId(conversationId);
-    if (row === undefined) {
-      throw new AgCliError("runtime_error", `failed to register conversation ${conversationId}`);
-    }
-    return row;
+    return row as ManagedRow;
   }
 
   ensureConversation(conversationId: string, options: RegisterOptions = {}): ManagedRow {
@@ -201,9 +198,6 @@ export class StateStore {
       }
       const key = pair.slice(0, separator);
       const value = pair.slice(separator + 1);
-      if (key.length === 0) {
-        throw new AgCliError("invalid_usage", `invalid label ${pair}`);
-      }
       if (value.length === 0) {
         this.db
           .prepare("DELETE FROM labels WHERE conversation_id = ? AND key = ?")

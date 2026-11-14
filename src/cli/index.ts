@@ -1,7 +1,11 @@
 import { AgCliError } from "../types/protocol";
+import { runControlCommand } from "./commands/control";
 import { runGetCommand } from "./commands/get";
+import { runLabelCommand } from "./commands/label";
 import { runLsCommand } from "./commands/ls";
 import { runReadCommand } from "./commands/read";
+import { runRunCommand } from "./commands/run";
+import { runSendCommand } from "./commands/send";
 import { runStatusCommand } from "./commands/status";
 import { emitError, emitText, resolveMode, type StreamLike } from "./format";
 
@@ -23,9 +27,19 @@ const USAGE = `ag-cli - dispatch tasks to local Antigravity conversations and co
 Usage: ag-cli <command> [options]
 
 Conversations
+  run [prompt]                Start (or --reuse) a conversation and wait (--bg: don't wait)
   ls                          List active conversations (--all: include killed/unmanaged)
   get [c]                     Show observed state, status, tokens, and artifacts
   read [c]                    Print the latest reply and artifacts (--steps: show trace)
+  label <c> <k=v...>          Set or clear labels (key= removes)
+  kill <c>                    Cancel a running turn or mark conversation terminated
+  rm <c>                      Remove a conversation from registry (--purge-brain: delete files)
+
+Talk & Wait
+  send <c> <text>             Send a message to a conversation (--wait: wait for turn)
+  interrupt <c>               Cancel the currently running turn in a conversation
+
+More
   status                      Inspect Antigravity daemon, database, and agentapi health
 
 <c> is a target like c7, a name (clip-worker), a UUID prefix, or a full UUID.
@@ -96,6 +110,18 @@ export async function runCli(argv: string[], context: CliContext): Promise<numbe
     }
     if (command === "read") {
       return await runReadCommand(args, context);
+    }
+    if (command === "run") {
+      return await runRunCommand(args, context);
+    }
+    if (command === "send") {
+      return await runSendCommand(args, context);
+    }
+    if (command === "label") {
+      return await runLabelCommand(args, context);
+    }
+    if (command === "interrupt" || command === "kill" || command === "rm") {
+      return await runControlCommand(command, args, context);
     }
     throw new AgCliError("invalid_usage", `unknown command ${command}`, {
       hint: "Run ag-cli --help.",

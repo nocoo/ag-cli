@@ -304,6 +304,11 @@ function runTurn(db, id, title, message) {
   appendStep(id, inbound, "USER_INPUT", "DONE", { content: message });
   sleep(DELAY_MS);
 
+  if (MODE === "stuck") {
+    appendStep(id, inbound, "USER_INPUT", "DONE", { content: message });
+    saveSummary(db, id, title, inbound + 1, "CASCADE_RUN_STATUS_RUNNING", 1, inbound);
+    return;
+  }
   if (MODE === "error") {
     appendStep(id, inbound + 1, "GENERIC", "ERROR", { content: "mock failure" });
     saveSummary(db, id, title, inbound + 2, "CASCADE_RUN_STATUS_IDLE", 0, inbound);

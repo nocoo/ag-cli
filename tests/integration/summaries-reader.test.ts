@@ -116,7 +116,8 @@ describe("SummariesReader queries", () => {
     const writer = initSummariesDb(instance);
     writer.close();
 
-    const db = new DatabaseSync(instance.summariesDbPath, { readOnly: true });
+    const db = new DatabaseSync(instance.summariesDbPath);
+    db.exec("PRAGMA query_only = ON;");
     expect(() =>
       db.exec(`INSERT INTO conversation_summaries (conversation_id) VALUES ('${UUID_A}')`),
     ).toThrow();

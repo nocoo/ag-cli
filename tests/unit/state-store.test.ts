@@ -149,6 +149,16 @@ describe("registerConversation", () => {
     }
   });
 
+  it("reports unknown pragmas as null", () => {
+    const instance = sandbox();
+    const store = StateStore.open(statePath(instance), { create: true });
+    try {
+      expect(store?.pragma("definitely_not_a_pragma_here")).toBeNull();
+    } finally {
+      store?.close();
+    }
+  });
+
   it("re-registering the same conversation id is idempotent via ensureConversation", () => {
     const instance = sandbox();
     const store = StateStore.open(statePath(instance), { create: true });
@@ -166,6 +176,22 @@ describe("registerConversation", () => {
 });
 
 describe("queries and mutations", () => {
+  it("executes raw sql for maintenance", () => {
+    const instance = sandbox();
+    const store = StateStore.open(statePath(instance), { create: true });
+    try {
+      store.rawExec(
+        "INSERT INTO conversations (conversation_id, created_at, updated_at) VALUES (?, ?, ?)",
+        "21212121-2121-4211-8211-212121212121",
+        "2026-11-14T00:00:00Z",
+        "2026-11-14T00:00:00Z",
+      );
+      expect(store?.findByConversationId("21212121-2121-4211-8211-212121212121")).toBeDefined();
+    } finally {
+      store?.close();
+    }
+  });
+
   it("findActiveByName ignores terminated conversations", () => {
     const instance = sandbox();
     const store = StateStore.open(statePath(instance), { create: true });
