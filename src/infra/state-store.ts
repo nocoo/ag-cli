@@ -62,8 +62,19 @@ const SCHEMA = `
     token      TEXT NOT NULL,
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS store_meta (
+    key       TEXT PRIMARY KEY,
+    int_value INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS delivery_tickets (
+    seq                INTEGER PRIMARY KEY,
+    conversation_id    TEXT NOT NULL,
+    existed            INTEGER NOT NULL,
+    previous_watermark INTEGER
+  );
   CREATE INDEX IF NOT EXISTS idx_conversations_parent ON conversations(parent_id);
   CREATE INDEX IF NOT EXISTS idx_labels_kv ON labels(key, value);
+  CREATE INDEX IF NOT EXISTS idx_delivery_tickets_conversation ON delivery_tickets(conversation_id);
 `;
 
 type RawRow = Record<string, unknown>;
@@ -88,7 +99,7 @@ function toRow(raw: RawRow): ManagedRow {
     watermarkStep: Number(raw.watermark_step),
     lastTurn: Number(raw.last_turn),
     terminated: Number(raw.terminated),
-    deliverySeq: Number(raw.delivery_seq ?? 0),
+    deliverySeq: Number(raw.delivery_seq),
     createdAt: String(raw.created_at),
     updatedAt: String(raw.updated_at),
   };
@@ -132,60 +143,123 @@ export class StateStore {
     const now = this.now();
     this.db.exec("BEGIN IMMEDIATE;");
     try {
+      const seq = this.nextSeqLocked();
       const existing = this.db
         .prepare("SELECT watermark_step FROM conversations WHERE conversation_id = ?")
         .get(conversationId) as RawRow | undefined;
-      const createdRow = existing === undefined;
-      const previousWatermark = createdRow ? -1 : Number(existing.watermark_step);
+      const existed = existing !== undefined;
+      const previousWatermark = existed ? Number(existing.watermark_step) : -1;
       this.db
         .prepare(
-          "INSERT INTO conversations (conversation_id, watermark_step, delivery_seq, created_at, updated_at)" +
-            " VALUES (?, ?, 1, ?, ?)" +
-            " ON CONFLICT(conversation_id) DO UPDATE SET" +
-            " watermark_step = MAX(watermark_step, excluded.watermark_step)," +
-            " delivery_seq = delivery_seq + 1," +
-            " updated_at = excluded.updated_at",
+          "INSERT INTO delivery_tickets (seq, conversation_id, existed, previous_watermark)" +
+            " VALUES (?, ?, ?, ?)",
         )
-        .run(conversationId, watermarkStep, now, now);
-      const row = this.db
-        .prepare("SELECT delivery_seq FROM conversations WHERE conversation_id = ?")
-        .get(conversationId) as RawRow;
+        .run(seq, conversationId, existed ? 1 : 0, existed ? previousWatermark : null);
+      if (existed) {
+        this.db
+          .prepare(
+            "UPDATE conversations SET watermark_step = ?, delivery_seq = ?, updated_at = ?" +
+              " WHERE conversation_id = ?",
+          )
+          .run(watermarkStep, seq, now, conversationId);
+      } else {
+        this.db
+          .prepare(
+            "INSERT INTO conversations (conversation_id, watermark_step, delivery_seq, created_at, updated_at)" +
+              " VALUES (?, ?, ?, ?, ?)",
+          )
+          .run(conversationId, watermarkStep, seq, now, now);
+      }
       this.db.exec("COMMIT;");
-      return { seq: Number(row.delivery_seq), previousWatermark, createdRow };
+      return { seq, previousWatermark, createdRow: !existed };
     } catch (error) {
       this.db.exec("ROLLBACK;");
       throw error;
     }
   }
 
+  commitDelivery(conversationId: string, ticket: DeliveryTicket): void {
+    this.db
+      .prepare("DELETE FROM delivery_tickets WHERE seq = ? AND conversation_id = ?")
+      .run(ticket.seq, conversationId);
+  }
+
+  private nextSeqLocked(): number {
+    this.db
+      .prepare(
+        "INSERT INTO store_meta (key, int_value) VALUES ('delivery_seq', 1)" +
+          " ON CONFLICT(key) DO UPDATE SET int_value = int_value + 1",
+      )
+      .run();
+    const row = this.db
+      .prepare("SELECT int_value FROM store_meta WHERE key = 'delivery_seq'")
+      .get() as RawRow;
+    return Number(row.int_value);
+  }
+
   rollbackDelivery(conversationId: string, ticket: DeliveryTicket): boolean {
     this.db.exec("BEGIN IMMEDIATE;");
     try {
+      const mine = this.db
+        .prepare(
+          "SELECT seq, conversation_id, existed, previous_watermark FROM delivery_tickets" +
+            " WHERE seq = ? AND conversation_id = ?",
+        )
+        .get(ticket.seq, conversationId) as RawRow | undefined;
+      if (mine === undefined) {
+        this.db.exec("COMMIT;");
+        return false;
+      }
+      const newer = this.db
+        .prepare(
+          "SELECT MIN(seq) AS seq FROM delivery_tickets WHERE conversation_id = ? AND seq > ?",
+        )
+        .get(conversationId, ticket.seq) as RawRow | undefined;
+      const newerSeq = newer === undefined || newer.seq === null ? undefined : Number(newer.seq);
+      if (newerSeq !== undefined && Number.isInteger(newerSeq)) {
+        this.db
+          .prepare("UPDATE delivery_tickets SET existed = ?, previous_watermark = ? WHERE seq = ?")
+          .run(
+            Number(mine.existed),
+            mine.previous_watermark === null ? null : Number(mine.previous_watermark),
+            newerSeq,
+          );
+        this.db.prepare("DELETE FROM delivery_tickets WHERE seq = ?").run(ticket.seq);
+        this.db.exec("COMMIT;");
+        return false;
+      }
       const row = this.db
         .prepare("SELECT delivery_seq FROM conversations WHERE conversation_id = ?")
         .get(conversationId) as RawRow | undefined;
       if (row === undefined || Number(row.delivery_seq) !== ticket.seq) {
+        this.db.prepare("DELETE FROM delivery_tickets WHERE seq = ?").run(ticket.seq);
         this.db.exec("COMMIT;");
         return false;
       }
-      if (
-        ticket.createdRow &&
-        ticket.seq === 1 &&
-        Number(
-          (
-            this.db
-              .prepare("SELECT COUNT(*) AS n FROM labels WHERE conversation_id = ?")
-              .get(conversationId) as RawRow
-          ).n,
-        ) === 0
-      ) {
+      this.db.prepare("DELETE FROM delivery_tickets WHERE seq = ?").run(ticket.seq);
+      const earlier = this.db
+        .prepare(
+          "SELECT seq FROM delivery_tickets WHERE conversation_id = ? AND seq < ?" +
+            " ORDER BY seq DESC LIMIT 1",
+        )
+        .get(conversationId, ticket.seq) as RawRow | undefined;
+      const previousWatermark =
+        mine.previous_watermark === null ? -1 : Number(mine.previous_watermark);
+      if (earlier !== undefined) {
+        this.db
+          .prepare(
+            "UPDATE conversations SET watermark_step = ?, delivery_seq = ?, updated_at = ?" +
+              " WHERE conversation_id = ?",
+          )
+          .run(previousWatermark, Number(earlier.seq), this.now(), conversationId);
+      } else if (Number(mine.existed) === 0) {
         this.db.prepare("DELETE FROM conversations WHERE conversation_id = ?").run(conversationId);
       } else {
         this.db
           .prepare(
             "UPDATE conversations SET watermark_step = ?, updated_at = ? WHERE conversation_id = ?",
           )
-          .run(ticket.previousWatermark, this.now(), conversationId);
+          .run(previousWatermark, this.now(), conversationId);
       }
       this.db.exec("COMMIT;");
       return true;
@@ -195,15 +269,20 @@ export class StateStore {
     }
   }
 
-  acquireNameReservation(name: string, token: string): boolean {
+  acquireNameReservation(name: string, token: string, ttlMs = 30_000): boolean {
     this.db.exec("BEGIN IMMEDIATE;");
     try {
       const holder = this.db
-        .prepare("SELECT token FROM name_reservations WHERE name = ?")
+        .prepare("SELECT token, created_at FROM name_reservations WHERE name = ?")
         .get(name) as RawRow | undefined;
       if (holder !== undefined) {
-        this.db.exec("COMMIT;");
-        return false;
+        const createdMs = Date.parse(String(holder.created_at));
+        const stale = Number.isNaN(createdMs) || Date.now() - createdMs >= ttlMs;
+        if (!stale) {
+          this.db.exec("COMMIT;");
+          return false;
+        }
+        this.db.prepare("DELETE FROM name_reservations WHERE name = ?").run(name);
       }
       this.db
         .prepare("INSERT INTO name_reservations (name, token, created_at) VALUES (?, ?, ?)")
@@ -328,11 +407,8 @@ export class StateStore {
         }
       }
       this.db
-        .prepare(
-          "UPDATE conversations SET delivery_seq = delivery_seq + 1, updated_at = ?" +
-            " WHERE conversation_id = ?",
-        )
-        .run(this.now(), conversationId);
+        .prepare("UPDATE delivery_tickets SET existed = 1 WHERE conversation_id = ?")
+        .run(conversationId);
       this.db.exec("COMMIT;");
     } catch (error) {
       this.db.exec("ROLLBACK;");
@@ -369,6 +445,7 @@ export class StateStore {
   }
 
   removeConversation(conversationId: string): void {
+    this.db.prepare("DELETE FROM delivery_tickets WHERE conversation_id = ?").run(conversationId);
     this.db.prepare("DELETE FROM conversations WHERE conversation_id = ?").run(conversationId);
   }
 

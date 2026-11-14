@@ -1,8 +1,22 @@
 import { appendFileSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { StateStore } from "../../src/infra/state-store";
 import { TranscriptWatcher, type WatchChangeSource } from "../../src/infra/transcript-watcher";
 import { createSandbox, initSummariesDb, type Sandbox } from "../helpers/sandbox";
+
+const readSyncMeter = vi.hoisted(() => ({ bytes: 0 }));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    readSync: (...args: Parameters<typeof actual.readSync>) => {
+      const read = actual.readSync(...args);
+      readSyncMeter.bytes += read;
+      return read;
+    },
+  };
+});
 
 const active: Sandbox[] = [];
 
@@ -562,6 +576,133 @@ describe("in-place rewrite detection (review F12)", () => {
     appendFileSync(path, step(1, { content: "appended" }));
     watcher.readNewSteps();
     expect(watcher.currentSteps().map((entry) => entry.step_index)).toEqual([0, 1]);
+    watcher.close();
+  });
+
+  it("increments a generation counter on every rewrite and reset", () => {
+    const instance = sandbox();
+    mkdirSync(logsDir(instance), { recursive: true });
+    const path = transcriptPath(instance);
+    writeFileSync(path, step(0, { content: "A" }));
+    const watcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      onChange: () => {},
+    });
+    expect(watcher.generation).toBe(0);
+    watcher.readNewSteps();
+    expect(watcher.generation).toBe(0);
+    writeFileSync(path, step(0, { content: "B" }));
+    watcher.readNewSteps();
+    expect(watcher.generation).toBe(1);
+    writeFileSync(path, step(0, { content: "a much longer rewrite" }) + step(1));
+    watcher.readNewSteps();
+    expect(watcher.generation).toBe(2);
+    expect(watcher.currentSteps().map((entry) => entry.step_index)).toEqual([0, 1]);
+    watcher.close();
+  });
+
+  it("reads zero bytes when the transcript stat is unchanged and only new bytes on append (review R3 F13)", () => {
+    const instance = sandbox();
+    mkdirSync(logsDir(instance), { recursive: true });
+    const path = transcriptPath(instance);
+    writeFileSync(path, step(0, { content: "x".repeat(64 * 1024) }));
+    const watcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      onChange: () => {},
+    });
+    watcher.readNewSteps();
+
+    readSyncMeter.bytes = 0;
+    expect(watcher.readNewSteps()).toEqual([]);
+    expect(readSyncMeter.bytes).toBe(0);
+
+    const extra = step(1);
+    appendFileSync(path, extra);
+    const fresh = watcher.readNewSteps();
+    expect(fresh).toHaveLength(1);
+    expect(readSyncMeter.bytes).toBe(extra.length);
+    watcher.close();
+  });
+
+  it("notices state.db WAL commits through the fallback timer (review R3 F7)", async () => {
+    const instance = sandbox();
+    mkdirSync(logsDir(instance), { recursive: true });
+    writeFileSync(transcriptPath(instance), step(0));
+    const statePath = join(instance.agCliHome, "state.db");
+    mkdirSync(instance.agCliHome, { recursive: true });
+    const writer = StateStore.open(statePath, { create: true });
+    writer.registerConversation(CONVERSATION, {});
+    const sources: string[] = [];
+    const watcher: TranscriptWatcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      stateDbPath: statePath,
+      debounceMs: 60_000,
+      fallbackMs: 40,
+      onChange: (source) => {
+        sources.push(source);
+      },
+    });
+    watcher.start();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    writer.markTerminated(CONVERSATION);
+    await waitFor(() => sources.includes("state"), 2000);
+    watcher.close();
+    const internals = watcher as unknown as { readStateDataVersion(): number | null };
+    expect(internals.readStateDataVersion()).toBeNull();
+    writer.close();
+
+    const noState = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      onChange: () => {},
+    });
+    expect(
+      (noState as unknown as { readStateDataVersion(): number | null }).readStateDataVersion(),
+    ).toBeNull();
+    noState.close();
+  });
+
+  it("falls back to the verified rebuild when the fast append slice is malformed (review R3 F13)", () => {
+    const instance = sandbox();
+    mkdirSync(logsDir(instance), { recursive: true });
+    const path = transcriptPath(instance);
+    writeFileSync(path, step(0, { content: "x".repeat(64 * 1024) }));
+    const watcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      onChange: () => {},
+    });
+    watcher.readNewSteps();
+    expect(watcher.currentSteps()).toHaveLength(1);
+
+    appendFileSync(path, `{ broken json\n${step(1, { content: "after garbage" })}`);
+    const fresh = watcher.readNewSteps();
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0]?.step_index).toBe(1);
+    expect(watcher.currentSteps()).toHaveLength(2);
+    watcher.close();
+  });
+
+  it("buffers partial appends without emitting steps on the fast path", () => {
+    const instance = sandbox();
+    mkdirSync(logsDir(instance), { recursive: true });
+    const path = transcriptPath(instance);
+    writeFileSync(path, step(0, { content: "x".repeat(64 * 1024) }));
+    const watcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      onChange: () => {},
+    });
+    watcher.readNewSteps();
+    appendFileSync(path, '{"step_index":1,"type":"GEN');
+    expect(watcher.readNewSteps()).toEqual([]);
+    appendFileSync(path, '","status":"DONE"}\n');
+    const fresh = watcher.readNewSteps();
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0]?.step_index).toBe(1);
     watcher.close();
   });
 });

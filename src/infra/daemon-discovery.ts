@@ -33,6 +33,7 @@ export function isPidAlive(pid: number): boolean {
 export async function httpHealthzProbe(port: number, timeoutMs = 1500): Promise<boolean> {
   return new Promise<boolean>((resolveOnce) => {
     let settled = false;
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
     const settle = (value: boolean): void => {
       if (settled) {
         return;
@@ -41,40 +42,51 @@ export async function httpHealthzProbe(port: number, timeoutMs = 1500): Promise<
       clearTimeout(deadlineTimer);
       resolveOnce(value);
     };
-    const req = request(
-      {
-        host: "127.0.0.1",
-        port,
-        path: "/healthz",
-        method: "GET",
-        headers: { accept: "application/json" },
-      },
-      (response) => {
-        let ended = false;
-        response.on("data", () => {});
-        response.on("end", () => {
-          ended = true;
-          settle(response.statusCode === 200);
-        });
-        response.on("aborted", () => settle(false));
-        response.on("close", () => {
-          if (!ended) {
-            settle(false);
-          }
-        });
-      },
-    );
-    const deadlineTimer = setTimeout(() => {
-      req.destroy();
+    try {
+      const req = request(
+        {
+          host: "127.0.0.1",
+          port,
+          path: "/healthz",
+          method: "GET",
+          headers: { accept: "application/json" },
+        },
+        (response) => {
+          let ended = false;
+          response.on("data", () => {});
+          response.on("end", () => {
+            ended = true;
+            settle(response.statusCode === 200);
+          });
+          response.on("aborted", () => settle(false));
+          response.on("error", () => settle(false));
+          response.on("close", () => {
+            if (!ended) {
+              settle(false);
+            }
+          });
+        },
+      );
+      deadlineTimer = setTimeout(() => {
+        req.destroy();
+        settle(false);
+      }, timeoutMs);
+      req.on("error", () => settle(false));
+      req.end();
+    } catch {
       settle(false);
-    }, timeoutMs);
-    req.on("error", () => settle(false));
-    req.end();
+    }
   });
 }
 
 function asPositiveInt(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function asPort(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535
+    ? value
+    : undefined;
 }
 
 type ParsedHub = { ok: true; candidate: DaemonCandidate } | { ok: false; error: string };
@@ -91,7 +103,7 @@ function parseHubFile(hubFile: string): ParsedHub {
   }
   const hub = raw as Record<string, unknown>;
   const pid = asPositiveInt(hub.pid);
-  const httpPort = asPositiveInt(hub.httpPort);
+  const httpPort = asPort(hub.httpPort);
   const lsVersion = typeof hub.lsVersion === "string" ? hub.lsVersion : undefined;
   const csrfToken = typeof hub.csrfToken === "string" ? hub.csrfToken : undefined;
   if (
@@ -102,7 +114,7 @@ function parseHubFile(hubFile: string): ParsedHub {
   ) {
     return { ok: false, error: "hub payload is missing required fields" };
   }
-  const httpsPort = asPositiveInt(hub.httpsPort) ?? 0;
+  const httpsPort = asPort(hub.httpsPort) ?? 0;
   return {
     ok: true,
     candidate: {

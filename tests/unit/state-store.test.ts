@@ -280,10 +280,11 @@ describe("queries and mutations", () => {
   });
 });
 
-describe("delivery sequencing and rollback (review F2)", () => {
+describe("delivery tickets and rollback (review R3 F2)", () => {
   const first = "11111111-1111-4111-8111-111111111111";
+  const second = "22222222-2222-4222-8222-222222222222";
 
-  it("beginDelivery inserts a missing row and reports createdRow with seq 1", () => {
+  it("beginDelivery inserts a missing row and reports createdRow", () => {
     const instance = sandbox();
     const store = StateStore.open(statePath(instance), { create: true });
     try {
@@ -298,76 +299,104 @@ describe("delivery sequencing and rollback (review F2)", () => {
     }
   });
 
-  it("beginDelivery increments seq and keeps the watermark max on updates", () => {
-    const instance = sandbox();
-    const store = StateStore.open(statePath(instance), { create: true });
-    try {
-      const a = store.beginDelivery(first, 4);
-      const b = store.beginDelivery(first, 2);
-      expect(b).toEqual({ seq: 2, previousWatermark: 4, createdRow: false });
-      expect(store.findByConversationId(first)).toMatchObject({
-        watermarkStep: 4,
-        deliverySeq: 2,
-      });
-      expect(a.seq).toBe(1);
-    } finally {
-      store.close();
+  it("concurrent double failures restore the original watermark regardless of rollback order", () => {
+    for (const order of ["A-first", "B-first"]) {
+      const instance = sandbox();
+      const store = StateStore.open(statePath(instance), { create: true });
+      try {
+        store.registerConversation(first, {});
+        store.beginDelivery(first, 0);
+        const a = store.beginDelivery(first, 2);
+        const b = store.beginDelivery(first, 2);
+        expect(a.seq).toBeLessThan(b.seq);
+        if (order === "A-first") {
+          expect(store.rollbackDelivery(first, a)).toBe(false);
+          expect(store.rollbackDelivery(first, b)).toBe(true);
+        } else {
+          expect(store.rollbackDelivery(first, b)).toBe(true);
+          expect(store.rollbackDelivery(first, a)).toBe(true);
+        }
+        const row = store.findByConversationId(first);
+        expect(row).toMatchObject({ watermarkStep: 0, terminated: 0 });
+      } finally {
+        store.close();
+      }
     }
   });
 
-  it("rollbackDelivery restores the watermark only when the seq still matches", () => {
+  it("a failed delivery never clobbers a concurrent committed delivery", () => {
     const instance = sandbox();
     const store = StateStore.open(statePath(instance), { create: true });
     try {
-      const a = store.beginDelivery(first, 4);
+      store.registerConversation(first, {});
+      const a = store.beginDelivery(first, 2);
       const b = store.beginDelivery(first, 5);
-      // B fails first: its rollback applies (seq matches).
-      expect(store.rollbackDelivery(first, b)).toBe(true);
-      expect(store.findByConversationId(first)?.watermarkStep).toBe(4);
-      // A's rollback must NOT clobber B's outcome: seq moved past A.
+      store.commitDelivery(first, b);
       expect(store.rollbackDelivery(first, a)).toBe(false);
-      expect(store.findByConversationId(first)?.watermarkStep).toBe(4);
+      expect(store.findByConversationId(first)?.watermarkStep).toBe(5);
     } finally {
       store.close();
     }
   });
 
-  it("rollbackDelivery deletes the row only for the creating delivery with no labels", () => {
+  it("rollback of a ticket that created the row deletes the row when nothing else landed", () => {
     const instance = sandbox();
     const store = StateStore.open(statePath(instance), { create: true });
     try {
       const a = store.beginDelivery(first, 4);
       expect(store.rollbackDelivery(first, a)).toBe(true);
       expect(store.findByConversationId(first)).toBeUndefined();
+    } finally {
+      store.close();
+    }
+  });
 
-      const b = store.beginDelivery(first, 1);
+  it("labels keep the row alive for a failed creating delivery and restore the watermark", () => {
+    const instance = sandbox();
+    const store = StateStore.open(statePath(instance), { create: true });
+    try {
+      const a = store.beginDelivery(first, 4);
       store.setLabels(first, ["keep=value"]);
-      expect(store.rollbackDelivery(first, b)).toBe(false);
+      expect(store.rollbackDelivery(first, a)).toBe(true);
       expect(store.findByConversationId(first)).toBeDefined();
+      expect(store.findByConversationId(first)?.watermarkStep).toBe(-1);
       expect(store.listLabels(first)).toEqual([{ key: "keep", value: "value" }]);
     } finally {
       store.close();
     }
   });
 
-  it("setLabels increments delivery_seq so a stale rollback cannot delete a labeled row", () => {
+  it("delete and recreate never lets an old ticket roll back the new row (review R3 ABA)", () => {
     const instance = sandbox();
     const store = StateStore.open(statePath(instance), { create: true });
     try {
-      const a = store.beginDelivery(first, 4);
-      const b = store.beginDelivery(first, 5);
-      store.setLabels(first, ["concurrent=keep"]);
-      expect(b.seq).toBe(2);
-      expect(store.rollbackDelivery(first, b)).toBe(false);
-      expect(store.rollbackDelivery(first, a)).toBe(false);
+      const old = store.beginDelivery(first, 2);
+      store.commitDelivery(first, old);
+      store.removeConversation(first);
+      const fresh = store.beginDelivery(first, 3);
+      expect(fresh.seq).toBeGreaterThan(old.seq);
+      expect(store.rollbackDelivery(first, old)).toBe(false);
       expect(store.findByConversationId(first)).toBeDefined();
-      expect(store.listLabels(first)).toEqual([{ key: "concurrent", value: "keep" }]);
+      expect(store.findByConversationId(first)?.watermarkStep).toBe(3);
     } finally {
       store.close();
     }
   });
 
-  it("migrates an existing state.db without delivery_seq (review F2)", () => {
+  it("removeConversation clears pending tickets for the conversation", () => {
+    const instance = sandbox();
+    const store = StateStore.open(statePath(instance), { create: true });
+    try {
+      const a = store.beginDelivery(first, 2);
+      store.removeConversation(first);
+      expect(store.rollbackDelivery(first, a)).toBe(false);
+      expect(store.beginDelivery(second, 1).seq).toBe(2);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("migrates an existing state.db without the delivery tables (review F2)", () => {
     const instance = sandbox();
     const path = statePath(instance);
     const legacy = new DatabaseSync(path);
@@ -443,6 +472,30 @@ describe("name reservations (review F3)", () => {
       expect(store.findByConversationId("11111111-1111-4111-8111-111111111111")?.name).toBe(
         "worker",
       );
+    } finally {
+      store.close();
+    }
+  });
+
+  it("purges stale reservations past the ttl and keeps fresh ones exclusive (review R3 F3)", () => {
+    const instance = sandbox();
+    const store = StateStore.open(statePath(instance), { create: true });
+    try {
+      expect(store.acquireNameReservation("orphan", "dead-token")).toBe(true);
+      store.rawExec(
+        "UPDATE name_reservations SET created_at = '2000-01-01T00:00:00Z' WHERE name = 'orphan'",
+      );
+      expect(store.acquireNameReservation("orphan", "new-token")).toBe(true);
+      store.releaseNameReservation("orphan", "new-token");
+
+      expect(store.acquireNameReservation("fresh", "token-a")).toBe(true);
+      expect(store.acquireNameReservation("fresh", "token-b")).toBe(false);
+      store.rawExec("UPDATE name_reservations SET created_at = 'not-a-date' WHERE name = 'fresh'");
+      expect(store.acquireNameReservation("fresh", "token-c")).toBe(true);
+
+      store.releaseNameReservation("fresh", "token-c");
+      expect(store.acquireNameReservation("edge", "token-a", 60_000)).toBe(true);
+      expect(store.acquireNameReservation("edge", "token-b", 60_000)).toBe(false);
     } finally {
       store.close();
     }

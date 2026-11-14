@@ -5,6 +5,7 @@ import {
   type FSWatcher,
   openSync,
   readSync,
+  type Stats,
   statSync,
   watch,
 } from "node:fs";
@@ -32,6 +33,8 @@ interface FileCursor {
   inode: number | null;
   size: number;
   mtimeMs: number;
+  ctimeMs: number;
+  lastStepIndex: number;
   hash: Hash;
   contentHash: string;
 }
@@ -57,8 +60,11 @@ export class TranscriptWatcher {
   private lastTranscriptStat: { size: number; mtimeMs: number } = { size: -1, mtimeMs: -1 };
   private lastDataVersion: number | null = null;
   private lastStateMtime: number | null = null;
+  private lastStateDataVersion: number | null = null;
   private summariesProbe: DatabaseSync | null = null;
+  private stateProbe: DatabaseSync | null = null;
   private closed = false;
+  private generationCount = 0;
 
   constructor(options: TranscriptWatcherOptions) {
     this.antigravityDir = options.antigravityDir;
@@ -87,9 +93,15 @@ export class TranscriptWatcher {
       inode: null,
       size: 0,
       mtimeMs: 0,
+      ctimeMs: 0,
+      lastStepIndex: -1,
       hash: createHash("sha256"),
       contentHash: "",
     };
+  }
+
+  get generation(): number {
+    return this.generationCount;
   }
 
   start(): void {
@@ -148,6 +160,30 @@ export class TranscriptWatcher {
       return;
     }
     this.lastStateMtime = statSync(this.stateDbPath).mtimeMs;
+    this.lastStateDataVersion = this.readStateDataVersion();
+  }
+
+  private readStateDataVersion(): number | null {
+    if (this.closed) {
+      return null;
+    }
+    if (this.stateDbPath === undefined || !existsSync(this.stateDbPath)) {
+      return null;
+    }
+    try {
+      if (this.stateProbe === null) {
+        const db = new DatabaseSync(this.stateDbPath);
+        db.exec("PRAGMA query_only = ON;");
+        db.exec("PRAGMA busy_timeout = 3000;");
+        this.stateProbe = db;
+      }
+      const row = this.stateProbe.prepare("PRAGMA data_version").get() as {
+        data_version: number;
+      };
+      return row.data_version;
+    } catch {
+      return null;
+    }
   }
 
   private readDataVersion(): number | null {
@@ -191,6 +227,8 @@ export class TranscriptWatcher {
     this.watchedDirs.clear();
     this.summariesProbe?.close();
     this.summariesProbe = null;
+    this.stateProbe?.close();
+    this.stateProbe = null;
   }
 
   private schedule(): void {
@@ -241,13 +279,22 @@ export class TranscriptWatcher {
 
     if (this.stateDbPath !== undefined && existsSync(this.stateDbPath)) {
       const mtimeMs = statSync(this.stateDbPath).mtimeMs;
-      if (this.lastStateMtime !== null && mtimeMs !== this.lastStateMtime) {
+      const mtimeChanged = this.lastStateMtime !== null && mtimeMs !== this.lastStateMtime;
+      this.lastStateMtime = mtimeMs;
+      const dataVersion = this.readStateDataVersion();
+      const versionChanged =
+        dataVersion !== null &&
+        this.lastStateDataVersion !== null &&
+        dataVersion !== this.lastStateDataVersion;
+      if (dataVersion !== null) {
+        this.lastStateDataVersion = dataVersion;
+      }
+      if (mtimeChanged || versionChanged) {
         this.onChange("state");
         if (this.closed) {
           return;
         }
       }
-      this.lastStateMtime = mtimeMs;
     }
 
     this.attachLateLogsDir();
@@ -308,6 +355,24 @@ export class TranscriptWatcher {
     cursor.decoder = new StringDecoder("utf8");
     cursor.hash = createHash("sha256");
     cursor.contentHash = "";
+    cursor.lastStepIndex = -1;
+  }
+
+  private static recordStat(cursor: FileCursor, stats: Stats): void {
+    cursor.inode = stats.ino;
+    cursor.size = stats.size;
+    cursor.mtimeMs = stats.mtimeMs;
+    cursor.ctimeMs = stats.ctimeMs;
+  }
+
+  private static isUnchanged(cursor: FileCursor, stats: Stats): boolean {
+    return (
+      stats.size === cursor.byteOffset &&
+      stats.mtimeMs === cursor.mtimeMs &&
+      stats.ctimeMs === cursor.ctimeMs &&
+      cursor.inode !== null &&
+      stats.ino === cursor.inode
+    );
   }
 
   private static hashPrefix(path: string, length: number): string {
@@ -342,11 +407,21 @@ export class TranscriptWatcher {
   ): TranscriptStep[] {
     if (!existsSync(path)) {
       TranscriptWatcher.resetCursor(cursor);
+      this.generationCount += 1;
       onRewrite?.();
       replace(cursor);
       return [];
     }
     const stats = statSync(path);
+    if (TranscriptWatcher.isUnchanged(cursor, stats)) {
+      return [];
+    }
+    if (stats.size > cursor.byteOffset && stats.ino === cursor.inode && cursor.byteOffset > 4096) {
+      const fast = this.tryFastAppend(path, cursor, stats, replace);
+      if (fast !== null) {
+        return fast;
+      }
+    }
     const onDiskPrefix = TranscriptWatcher.hashPrefix(
       path,
       Math.min(stats.size, cursor.byteOffset),
@@ -357,6 +432,7 @@ export class TranscriptWatcher {
       onDiskPrefix !== cursor.contentHash;
     if (rewritten) {
       TranscriptWatcher.resetCursor(cursor);
+      this.generationCount += 1;
       onRewrite?.();
       replace(cursor);
     }
@@ -386,12 +462,76 @@ export class TranscriptWatcher {
         }
       }
       cursor.byteOffset = offset;
-      cursor.inode = stats.ino;
-      cursor.size = stats.size;
-      cursor.mtimeMs = stats.mtimeMs;
+      TranscriptWatcher.recordStat(cursor, stats);
+      for (const step of steps) {
+        if (step.step_index > cursor.lastStepIndex) {
+          cursor.lastStepIndex = step.step_index;
+        }
+      }
       cursor.contentHash = cursor.hash.copy().digest("hex");
       replace(cursor);
       return steps;
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  private tryFastAppend(
+    path: string,
+    cursor: FileCursor,
+    stats: Stats,
+    replace: (cursor: FileCursor) => void,
+  ): TranscriptStep[] | null {
+    const fd = openSync(path, "r");
+    try {
+      const chunks: Buffer[] = [];
+      let offset = cursor.byteOffset;
+      while (offset < stats.size) {
+        const length = Math.min(64 * 1024, stats.size - offset);
+        const buffer = Buffer.alloc(length);
+        const bytes = readSync(fd, buffer, 0, length, offset);
+        if (bytes <= 0) {
+          return null;
+        }
+        chunks.push(buffer.subarray(0, bytes));
+        offset += bytes;
+      }
+      const appended = Buffer.concat(chunks);
+      const text = new StringDecoder("utf8").write(appended);
+      const chunk = cursor.partial + text;
+      const lines = chunk.split("\n");
+      const trailing = lines.pop() ?? "";
+      if (lines.length === 0) {
+        cursor.partial = trailing;
+        cursor.byteOffset = stats.size;
+        cursor.hash.update(appended);
+        cursor.contentHash = cursor.hash.copy().digest("hex");
+        TranscriptWatcher.recordStat(cursor, stats);
+        replace(cursor);
+        return [];
+      }
+      const completeLines = lines.filter((line) => line.trim().length > 0);
+      const parsed = parseTranscriptText(`${lines.join("\n")}\n`);
+      if (parsed.length !== completeLines.length) {
+        return null;
+      }
+      let lastIndex = cursor.lastStepIndex;
+      for (const step of parsed) {
+        if (step.step_index <= lastIndex) {
+          return null;
+        }
+        lastIndex = step.step_index;
+      }
+      cursor.partial = trailing;
+      cursor.byteOffset = stats.size;
+      cursor.hash.update(appended);
+      cursor.contentHash = cursor.hash.copy().digest("hex");
+      TranscriptWatcher.recordStat(cursor, stats);
+      cursor.lastStepIndex = lastIndex;
+      replace(cursor);
+      return parsed;
+    } catch {
+      return null;
     } finally {
       closeSync(fd);
     }

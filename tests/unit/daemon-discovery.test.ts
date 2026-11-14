@@ -113,6 +113,21 @@ describe("httpHealthzProbe", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
+  it("returns false when the body is aborted mid-stream (review R3 #11)", async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-length": "1000" });
+      res.write("partial");
+      setTimeout(() => res.destroy(), 20);
+    });
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port));
+    });
+    const started = Date.now();
+    await expect(httpHealthzProbe(port, 500)).resolves.toBe(false);
+    expect(Date.now() - started).toBeLessThan(2000);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
   it("returns false when the server hangs and the hard deadline fires (review P3-32)", async () => {
     const server = createServer(() => {});
     const port = await new Promise<number>((resolve) => {
@@ -123,6 +138,12 @@ describe("httpHealthzProbe", () => {
     expect(Date.now() - started).toBeLessThan(3000);
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }, 10_000);
+
+  it("returns false for out-of-range and malformed ports without throwing (review R3 #11)", async () => {
+    for (const bad of [65536, 65537, -1, 1.5]) {
+      await expect(httpHealthzProbe(bad as number, 100)).resolves.toBe(false);
+    }
+  });
 });
 
 describe("inspectDaemons", () => {
@@ -155,6 +176,35 @@ describe("inspectDaemons", () => {
     });
     expect(candidates[0]?.parseError).toBeUndefined();
     expect(calls).toEqual([8123]);
+  });
+
+  it("marks out-of-range hub ports as parse errors so healthy daemons still win (review R3 #11)", async () => {
+    const instance = sandbox();
+    writeHubFile(instance, {
+      pid: process.pid,
+      httpPort: 65536,
+      httpsPort: 0,
+      lsVersion: "bad",
+      csrfToken: "token-bad",
+    });
+    writeHubFile(instance, {
+      pid: process.pid,
+      httpPort: 8125,
+      httpsPort: 0,
+      lsVersion: "good",
+      csrfToken: "token-good",
+    });
+    const { probe } = alwaysHealthy();
+
+    const candidates = await inspectDaemons(instance.antigravityDir, { probe });
+    const broken = candidates.find((candidate) => candidate.hubFile.includes("65536"));
+    const healthy = candidates.find((candidate) => candidate.lsVersion === "good");
+    expect(broken?.parseError).toBeDefined();
+    expect(broken?.pidAlive).toBe(false);
+    expect(healthy?.parseError).toBeUndefined();
+    await expect(discoverDaemon(instance.antigravityDir, { probe })).resolves.toMatchObject({
+      lsVersion: "good",
+    });
   });
 
   it("marks hub files with broken payloads as parse errors", async () => {
