@@ -215,3 +215,14 @@ inside the packed tarball; `scripts/check-package.ts` smoke-tests it after insta
 - **One broken hub file must not abort discovery.** An out-of-range port made
   `http.request` throw synchronously and killed the whole scan. Ports are range
   validated at parse time and the probe wraps construction failures into `false`.
+
+## 2026-11-14 · npm unscoped name similarity is checked only on `PUT`
+
+`GET https://registry.npmjs.org/ag-cli` returned 404, so `ag-cli` passed initial name
+checks, yet `npm publish` (`PUT`) failed with `403 Forbidden` because npm strips
+hyphens/punctuation for anti-typosquatting similarity checks and `agcli` (as well as
+`agctl`) already existed. Avoid relying on `GET /<name>` 404 alone: check
+punctuation-stripped, plural, and phonetic neighbors (`nullg`, `null-g`, `nullgs`) on
+`https://registry.npmjs.org/` before locking an unscoped package name. Because `ag-cli`
+also collided with the vendor brand, the repository, CLI binary, env vars (`NULLG_*`),
+error type (`NullgError`), and package were unified to `nullg`.

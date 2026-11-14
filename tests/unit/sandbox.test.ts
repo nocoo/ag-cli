@@ -31,21 +31,21 @@ describe("createSandbox", () => {
   it("creates isolated directories and environment variables", () => {
     const instance = sandbox();
 
-    expect(instance.agCliHome.startsWith(instance.root)).toBe(true);
+    expect(instance.nullgHome.startsWith(instance.root)).toBe(true);
     expect(instance.configDir.startsWith(instance.root)).toBe(true);
     expect(instance.antigravityDir.startsWith(instance.root)).toBe(true);
     expect(instance.agentapiBin.startsWith(instance.root)).toBe(true);
 
-    expect(existsSync(join(instance.agCliHome, "state.db"))).toBe(false);
+    expect(existsSync(join(instance.nullgHome, "state.db"))).toBe(false);
     expect(existsSync(instance.daemonDir)).toBe(true);
     expect(existsSync(instance.brainDir)).toBe(true);
     expect(existsSync(instance.summariesDbPath)).toBe(false);
 
     expect(instance.env).toEqual({
-      AG_CLI_HOME: instance.agCliHome,
-      AG_CLI_CONFIG_DIR: instance.configDir,
-      AG_CLI_ANTIGRAVITY_DIR: instance.antigravityDir,
-      AG_CLI_AGENTAPI_BIN: instance.agentapiBin,
+      NULLG_HOME: instance.nullgHome,
+      NULLG_CONFIG_DIR: instance.configDir,
+      NULLG_ANTIGRAVITY_DIR: instance.antigravityDir,
+      NULLG_AGENTAPI_BIN: instance.agentapiBin,
     });
   });
 

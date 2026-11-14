@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 
 export interface Sandbox {
   root: string;
-  agCliHome: string;
+  nullgHome: string;
   configDir: string;
   antigravityDir: string;
   agentapiBin: string;
@@ -66,20 +66,20 @@ const SUMMARIES_SCHEMA = `
 export function isolatedSubprocessEnv(): Record<string, string> {
   return {
     HC_TERMINAL_ID: "",
-    AG_CLI_CALLER_ID: "",
+    NULLG_CALLER_ID: "",
     ANTIGRAVITY_CONVERSATION_ID: "",
     ANTIGRAVITY_PROJECT_ID: "",
   };
 }
 
-export function createSandbox(prefix = "ag-cli-test"): Sandbox {
+export function createSandbox(prefix = "nullg-test"): Sandbox {
   const root = mkdtempSync(join(tmpdir(), `${prefix}-`));
-  const agCliHome = join(root, "ag-cli-home");
-  const configDir = join(root, "ag-cli-config");
+  const nullgHome = join(root, "nullg-home");
+  const configDir = join(root, "nullg-config");
   const antigravityDir = join(root, "antigravity");
   const agentapiBin = join(root, "bin", "mock-agentapi");
 
-  mkdirSync(agCliHome, { recursive: true });
+  mkdirSync(nullgHome, { recursive: true });
   mkdirSync(join(configDir, "templates"), { recursive: true });
   mkdirSync(join(antigravityDir, "daemon"), { recursive: true });
   mkdirSync(join(antigravityDir, "brain"), { recursive: true });
@@ -87,7 +87,7 @@ export function createSandbox(prefix = "ag-cli-test"): Sandbox {
 
   return {
     root,
-    agCliHome,
+    nullgHome,
     configDir,
     antigravityDir,
     agentapiBin,
@@ -95,10 +95,10 @@ export function createSandbox(prefix = "ag-cli-test"): Sandbox {
     summariesDbPath: join(antigravityDir, "conversation_summaries.db"),
     brainDir: join(antigravityDir, "brain"),
     env: {
-      AG_CLI_HOME: agCliHome,
-      AG_CLI_CONFIG_DIR: configDir,
-      AG_CLI_ANTIGRAVITY_DIR: antigravityDir,
-      AG_CLI_AGENTAPI_BIN: agentapiBin,
+      NULLG_HOME: nullgHome,
+      NULLG_CONFIG_DIR: configDir,
+      NULLG_ANTIGRAVITY_DIR: antigravityDir,
+      NULLG_AGENTAPI_BIN: agentapiBin,
     },
     cleanup() {
       rmSync(root, { recursive: true, force: true });

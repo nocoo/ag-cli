@@ -21,7 +21,7 @@ vi.mock("node:fs", async (importOriginal) => {
 const active: Sandbox[] = [];
 
 function sandbox(): Sandbox {
-  const created = createSandbox("ag-cli-unit-watcher");
+  const created = createSandbox("nullg-unit-watcher");
   active.push(created);
   return created;
 }
@@ -325,7 +325,7 @@ describe("state database notifications", () => {
     const instance = sandbox();
     const { join: joinPath } = await import("node:path");
     const { writeFileSync: write } = await import("node:fs");
-    const stateDbPath = joinPath(instance.agCliHome, "state.db");
+    const stateDbPath = joinPath(instance.nullgHome, "state.db");
     write(stateDbPath, "seed");
     const sources: WatchChangeSource[] = [];
     const watcher = new TranscriptWatcher({
@@ -440,8 +440,8 @@ describe("close", () => {
     const instance = sandbox();
     mkdirSync(logsDir(instance), { recursive: true });
     writeFileSync(transcriptPath(instance), step(0));
-    const stateDb = join(instance.agCliHome, "state.db");
-    mkdirSync(instance.agCliHome, { recursive: true });
+    const stateDb = join(instance.nullgHome, "state.db");
+    mkdirSync(instance.nullgHome, { recursive: true });
     writeFileSync(stateDb, "x");
 
     let transcriptCalls = 0;
@@ -630,8 +630,8 @@ describe("in-place rewrite detection (review F12)", () => {
     const instance = sandbox();
     mkdirSync(logsDir(instance), { recursive: true });
     writeFileSync(transcriptPath(instance), step(0));
-    const statePath = join(instance.agCliHome, "state.db");
-    mkdirSync(instance.agCliHome, { recursive: true });
+    const statePath = join(instance.nullgHome, "state.db");
+    mkdirSync(instance.nullgHome, { recursive: true });
     const writer = StateStore.open(statePath, { create: true });
     writer.registerConversation(CONVERSATION, {});
     const sources: string[] = [];

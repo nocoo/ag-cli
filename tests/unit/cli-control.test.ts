@@ -20,7 +20,7 @@ const active: Sandbox[] = [];
 const servers: MockLanguageServer[] = [];
 
 function sandbox(): Sandbox {
-  const created = createSandbox("ag-cli-unit-control");
+  const created = createSandbox("nullg-unit-control");
   active.push(created);
   return created;
 }
@@ -120,7 +120,7 @@ describe("run command", () => {
     });
     expect(payload.conversationId).toHaveLength(36);
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.findActiveByName("deps-clip")).toMatchObject({
       conversationId: payload.conversationId,
       shortId: 1,
@@ -140,7 +140,7 @@ describe("run command", () => {
     await runCli(["run", "--bg", "--json", "--name", "orch", "first task"], first);
     const parentId = stdoutJson<{ conversationId: string }>(first).conversationId;
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
     store.releaseName(parentId);
     store.close();
 
@@ -153,12 +153,12 @@ describe("run command", () => {
 
     const steps = readTranscript(instance, childId);
     const inbound = String(steps[0]?.content ?? "");
-    expect(inbound).toContain('<ag-cli from="c1 ');
+    expect(inbound).toContain('<nullg from="c1 ');
     expect(inbound).toContain(
-      `reach="ag-cli send ${parentId} \\"<summary or artifact path>\\" when done or blocked"`,
+      `reach="nullg send ${parentId} \\"<summary or artifact path>\\" when done or blocked"`,
     );
     expect(inbound).toContain("child task");
-    expect(inbound.endsWith("</ag-cli>")).toBe(true);
+    expect(inbound.endsWith("</nullg>")).toBe(true);
   });
 
   it("skips the envelope with --no-notify and honors hc callers", async () => {
@@ -167,7 +167,7 @@ describe("run command", () => {
     await runCli(["run", "--bg", "--json", "--no-notify", "quiet task"], plain);
     const quietId = stdoutJson<{ conversationId: string }>(plain).conversationId;
     const quiet = String(readTranscript(instance, quietId)[0]?.content);
-    expect(quiet).toContain("<ag-cli cwd=");
+    expect(quiet).toContain("<nullg cwd=");
     expect(quiet).toContain("quiet task");
     expect(quiet).not.toContain("reach=");
 
@@ -175,7 +175,7 @@ describe("run command", () => {
     await runCli(["run", "--bg", "--json", "loud task"], wrapped);
     const loudId = stdoutJson<{ conversationId: string }>(wrapped).conversationId;
     const content = String(readTranscript(instance, loudId)[0]?.content ?? "");
-    expect(content).toContain('<ag-cli from="hc:t9"');
+    expect(content).toContain('<nullg from="hc:t9"');
     expect(content).toContain('reach="hc send t9');
   });
 
@@ -259,7 +259,7 @@ describe("run command", () => {
     await runCli(["run", "--bg", "--json", "--name", "sparse", "first"], runCtx);
     const conversationId = stdoutJson<{ conversationId: string }>(runCtx).conversationId;
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
     store.rawExec(
       "UPDATE conversations SET cwd = NULL, model = NULL WHERE conversation_id = ?",
       conversationId,
@@ -387,7 +387,7 @@ describe("run command", () => {
     await runCli(["run", "--bg", "--json", "hc task"], ctx);
     const conversationId = stdoutJson<{ conversationId: string }>(ctx).conversationId;
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.findByConversationId(conversationId)?.parentId).toBe("hc:t7");
     store?.close();
   });
@@ -414,7 +414,7 @@ describe("run command", () => {
     expect(payload.conversationId).not.toBe(oldId);
     expect(payload.shortId).not.toBe("c1");
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.findByConversationId(oldId)?.terminated).toBe(1);
     store?.close();
   });
@@ -442,7 +442,7 @@ describe("run command", () => {
       ],
       second,
     );
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.listLabels(conversationId)).toEqual([{ key: "reuse", value: "yes" }]);
     store?.close();
     expect(readMockAgentapiCalls(instance).some((call) => call.args.includes("--title"))).toBe(
@@ -458,12 +458,12 @@ describe("run command", () => {
 
     const failing = context(false, {
       ...instance.env,
-      AG_CLI_AGENTAPI_BIN: join(instance.root, "missing-bin"),
+      NULLG_AGENTAPI_BIN: join(instance.root, "missing-bin"),
     });
     const code = await runCli(["send", "fragile", "will fail"], failing);
     expect(code).toBe(4);
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.findByConversationId(conversationId)?.watermarkStep).toBe(0);
     store?.close();
 
@@ -505,7 +505,7 @@ describe("run command", () => {
     expect(ok).toBe(0);
 
     expect(await failing).toBe(1);
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     const row = store?.findByConversationId(conversationId);
     store?.close();
     expect(row?.watermarkStep).toBe(3);
@@ -547,7 +547,7 @@ describe("run command", () => {
     ).toBe(0);
 
     expect(await failing).toBe(1);
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.findByConversationId(outsideId)).toBeDefined();
     expect(store?.listLabels(outsideId)).toEqual([{ key: "concurrent", value: "keep" }]);
     store?.close();
@@ -584,7 +584,7 @@ describe("run command", () => {
       db.prepare("SELECT COUNT(*) AS n FROM conversation_summaries").get() as { n: number }
     ).n;
     expect(after - before).toBe(1);
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.listManaged().length).toBe(1);
     store?.close();
     db.close();
@@ -592,7 +592,7 @@ describe("run command", () => {
 
   it("never dispatches after a reservation timeout when no active name exists (review R3 F3)", async () => {
     const { instance } = await prepared();
-    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
     store.acquireNameReservation("slow-name", "another-process");
     store.close();
 
@@ -611,7 +611,7 @@ describe("run command", () => {
 
   it("recovers names from stale reservations on the next run (review R3 F3)", async () => {
     const { instance } = await prepared();
-    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
     store.acquireNameReservation("orphan", "dead-token");
     store.rawExec(
       "UPDATE name_reservations SET created_at = '2000-01-01T00:00:00Z' WHERE name = 'orphan'",
@@ -630,7 +630,7 @@ describe("run command", () => {
     await runCli(["run", "--bg", "--json", "--name", "stale", "one"], first);
     const conversationId = stdoutJson<{ conversationId: string }>(first).conversationId;
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
     store.markTerminated(conversationId);
     // simulate an externally terminated row that still holds the name
     store.rawExec(
@@ -688,14 +688,14 @@ describe("run command", () => {
     await runCli(["run", "--bg", "--json", "--name", "bg-turn", "task"], ctx);
     const conversationId = stdoutJson<{ conversationId: string }>(ctx).conversationId;
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.findByConversationId(conversationId)?.lastTurn).toBe(0);
     store?.close();
 
     await new Promise((resolve) => setTimeout(resolve, 700));
     const getCtx = context(false, instance.env);
     await runCli(["get", "bg-turn", "--json"], getCtx);
-    const reloaded = StateStore.open(join(instance.agCliHome, "state.db"));
+    const reloaded = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(reloaded?.findByConversationId(conversationId)?.lastTurn).toBe(1);
     reloaded?.close();
   });
@@ -720,7 +720,7 @@ describe("run command", () => {
         }).stdout,
       ) as { conversationId: string }
     ).conversationId;
-    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    const store = StateStore.open(join(instance.nullgHome, "state.db"), { create: true });
     store.registerConversation(child, { name: "stuck-kid", parentId: parent });
     store.close();
     const db = initSummariesDb(instance);
@@ -730,7 +730,7 @@ describe("run command", () => {
     ).run(parent, "owner");
     db.close();
 
-    const ctx = context(true, { ...instance.env, AG_CLI_CALLER_ID: parent });
+    const ctx = context(true, { ...instance.env, NULLG_CALLER_ID: parent });
     const code = await runCli(["wait", "--children", "any", "--timeout", "1"], ctx);
     expect(code).toBe(124);
     const text = stdoutText(ctx);
@@ -802,7 +802,7 @@ describe("send command", () => {
       queued: false,
     });
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.findByConversationId(conversationId)?.watermarkStep).toBe(3);
     store?.close();
   });
@@ -819,7 +819,7 @@ describe("send command", () => {
       watermarkStep: 3,
     });
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.findByConversationId(outsideId)).toMatchObject({ shortId: 1, watermarkStep: 3 });
     store?.close();
   });
@@ -904,8 +904,8 @@ describe("send command", () => {
     const code = await runCli(["send", "c1", "report back"], ctx);
     expect(code).toBe(0);
     const steps = readTranscript(instance, conversationId);
-    expect(String(steps[3]?.content)).toContain('<ag-cli from="c1 ');
-    expect(String(steps[3]?.content)).toContain(`reach="ag-cli send ${conversationId}`);
+    expect(String(steps[3]?.content)).toContain('<nullg from="c1 ');
+    expect(String(steps[3]?.content)).toContain(`reach="nullg send ${conversationId}`);
 
     const orphanCaller = context(false, {
       ...instance.env,
@@ -914,7 +914,7 @@ describe("send command", () => {
     expect(await runCli(["send", "c1", "plain reply"], orphanCaller)).toBe(0);
     const wrapped = readTranscript(instance, conversationId).at(-1);
     expect(String(wrapped?.content)).toContain(
-      '<ag-cli from="3e3e3e3e-3e3e-43e3-83e3-3e3e3e3e3e3e"',
+      '<nullg from="3e3e3e3e-3e3e-43e3-83e3-3e3e3e3e3e3e"',
     );
   });
 
@@ -957,11 +957,11 @@ describe("send command", () => {
 
     const failing = context(false, {
       ...instance.env,
-      AG_CLI_AGENTAPI_BIN: join(instance.root, "missing-bin"),
+      NULLG_AGENTAPI_BIN: join(instance.root, "missing-bin"),
     });
     expect(await runCli(["send", outsideId, "fail"], failing)).toBe(4);
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.findByConversationId(outsideId)).toBeUndefined();
     store?.close();
   });
@@ -1146,7 +1146,7 @@ describe("control commands", () => {
     expect(code).toBe(0);
     expect(stdoutJson<{ terminated: boolean }>(ctx).terminated).toBe(true);
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.findByConversationId(conversationId)?.terminated).toBe(1);
     store?.close();
   });
@@ -1177,7 +1177,7 @@ describe("control commands", () => {
     expect(code).toBe(0);
     expect(stdoutJson<{ terminated: boolean }>(ctx).terminated).toBe(true);
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.findByConversationId(conversationId)?.terminated).toBe(1);
     store?.close();
 
@@ -1204,7 +1204,7 @@ describe("control commands", () => {
     expect(stdoutJson<{ purgedBrain: boolean }>(purgeCtx).purgedBrain).toBe(true);
     expect(existsSync(join(instance.brainDir, purgeId))).toBe(false);
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.findByConversationId(keepId)).toBeUndefined();
     expect(
       readFileSync(
@@ -1234,7 +1234,7 @@ describe("control commands", () => {
     expect(JSON.parse(stderrText(ctx))).toMatchObject({ error: { kind: "invalid_usage" } });
     expect(existsSync(join(outside, "keep.txt"))).toBe(true);
 
-    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const store = StateStore.open(join(instance.nullgHome, "state.db"));
     expect(store?.findByConversationId(conversationId)).toBeDefined();
     store?.close();
   });

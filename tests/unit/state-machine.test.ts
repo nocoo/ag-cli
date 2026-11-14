@@ -35,7 +35,7 @@ describe("priority 1: error (docs/03 §2)", () => {
     ).toBe("error");
   });
 
-  it("derives error when ag-cli marked the conversation terminated", () => {
+  it("derives error when nullg marked the conversation terminated", () => {
     expect(
       deriveConversationStatus(
         facts({ summary: IDLE, terminated: 1, steps: [step({ step_index: 0 })] }),

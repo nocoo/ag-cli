@@ -1,4 +1,4 @@
-import { AgCliError } from "../types/protocol";
+import { NullgError } from "../types/protocol";
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const ALIAS_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -12,7 +12,7 @@ export function assertUuid(value: string, source: "input" | "upstream" = "input"
   if (isUuid(value)) {
     return value;
   }
-  throw new AgCliError(
+  throw new NullgError(
     source === "upstream" ? "runtime_error" : "invalid_usage",
     `invalid conversation id ${JSON.stringify(value)}`,
     { hint: "Conversation ids must be 36-character UUIDs." },
@@ -21,7 +21,7 @@ export function assertUuid(value: string, source: "input" | "upstream" = "input"
 
 export function assertAlias(name: string): string {
   if (!ALIAS_RE.test(name)) {
-    throw new AgCliError("invalid_usage", `invalid name ${name}`, {
+    throw new NullgError("invalid_usage", `invalid name ${name}`, {
       hint: "Names match ^[a-z0-9][a-z0-9_-]{0,31}$.",
     });
   }
@@ -30,7 +30,7 @@ export function assertAlias(name: string): string {
 
 export function assertTerminalId(value: string): string {
   if (!TERMINAL_ID_RE.test(value)) {
-    throw new AgCliError("invalid_usage", `invalid terminal id ${JSON.stringify(value)}`, {
+    throw new NullgError("invalid_usage", `invalid terminal id ${JSON.stringify(value)}`, {
       hint: "Terminal ids match ^[A-Za-z0-9._-]+$.",
     });
   }

@@ -5,7 +5,7 @@ import { AgentApiClient } from "../../infra/agentapi-client";
 import { resolvePaths } from "../../infra/paths";
 import { type DeliveryTicket, StateStore } from "../../infra/state-store";
 import { openSummariesReader } from "../../infra/summaries-reader";
-import { AgCliError } from "../../types/protocol";
+import { NullgError } from "../../types/protocol";
 import { emitJson, emitText, resolveMode, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
 import { awaitSettledStatus } from "./await-settled";
@@ -22,19 +22,19 @@ export async function runSendCommand(
     values: ["if", "timeout", "title"],
   });
   if (flags.positionals.length !== 2) {
-    throw new AgCliError("invalid_usage", "send requires exactly a target and a message");
+    throw new NullgError("invalid_usage", "send requires exactly a target and a message");
   }
   const target = flags.positionals[0] as string;
   const text = flags.positionals[1] as string;
   if (target.length === 0) {
-    throw new AgCliError("invalid_usage", "send requires a target and a message");
+    throw new NullgError("invalid_usage", "send requires a target and a message");
   }
   if (text.length === 0) {
-    throw new AgCliError("invalid_usage", "send requires a message");
+    throw new NullgError("invalid_usage", "send requires a message");
   }
   const ifStatus = flags.values.get("if");
   if (ifStatus !== undefined && !IF_STATUSES.has(ifStatus)) {
-    throw new AgCliError("invalid_usage", `--if expects idle, done or working, got ${ifStatus}`);
+    throw new NullgError("invalid_usage", `--if expects idle, done or working, got ${ifStatus}`);
   }
   const timeoutSec = parseTimeout(flags.values.get("timeout"));
 
@@ -53,17 +53,17 @@ export async function runSendCommand(
         : `c${managedBefore.shortId}`;
 
     if (ifStatus !== undefined && observation.status !== ifStatus) {
-      throw new AgCliError(
+      throw new NullgError(
         "precondition_failed",
         `conversation ${label}${managedBefore?.name === null || managedBefore?.name === undefined ? "" : ` (${managedBefore.name})`} is currently ${observation.status}, expected ${ifStatus}`,
-        { hint: "Run `ag-cli wait <c>` first or omit --if to queue the message." },
+        { hint: "Run `nullg wait <c>` first or omit --if to queue the message." },
       );
     }
     if (observation.status === "blocked" && !flags.flags.has("force")) {
-      throw new AgCliError(
+      throw new NullgError(
         "blocked_conversation",
         `conversation ${label} is blocked waiting for approval or an answer`,
-        { hint: "Inspect with `ag-cli read <c> --steps`, then resend with --force." },
+        { hint: "Inspect with `nullg read <c> --steps`, then resend with --force." },
       );
     }
     const queued = observation.status === "working";
@@ -133,7 +133,7 @@ export async function runSendCommand(
         } else {
           emitText(
             context.stderr,
-            `[ag-cli] still working as c${row.shortId}${row.name === null ? "" : ` (${row.name}, ${resolved.conversationId.slice(0, 8)})`}`,
+            `[nullg] still working as c${row.shortId}${row.name === null ? "" : ` (${row.name}, ${resolved.conversationId.slice(0, 8)})`}`,
           );
         }
         return 124;
@@ -170,7 +170,7 @@ export async function runSendCommand(
 }
 
 function callerContext(caller: CallerContext | null, store: StateStore): CallerContext | null {
-  if (caller === null || caller.kind !== "ag-cli") {
+  if (caller === null || caller.kind !== "nullg") {
     return caller;
   }
   const row = store.findByConversationId(caller.conversationId);
@@ -183,7 +183,7 @@ function parseTimeout(raw: string | undefined): number {
   }
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 0) {
-    throw new AgCliError("invalid_usage", `--timeout expects a non-negative integer, got ${raw}`);
+    throw new NullgError("invalid_usage", `--timeout expects a non-negative integer, got ${raw}`);
   }
   return value;
 }

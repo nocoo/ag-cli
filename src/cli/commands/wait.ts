@@ -9,7 +9,7 @@ import {
 } from "../../infra/summaries-reader";
 import { TranscriptWatcher } from "../../infra/transcript-watcher";
 import type { ConversationStatus } from "../../types/protocol";
-import { AgCliError } from "../../types/protocol";
+import { NullgError } from "../../types/protocol";
 import { emitJson, emitText, resolveMode, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
 import { awaitSettledStatus } from "./await-settled";
@@ -29,11 +29,11 @@ export async function runWaitCommand(
 ): Promise<number> {
   const flags = parseCommandFlags(args, { booleans: ["json"], values: ["children", "timeout"] });
   if (flags.positionals.length > 1) {
-    throw new AgCliError("invalid_usage", "wait accepts at most one target");
+    throw new NullgError("invalid_usage", "wait accepts at most one target");
   }
   const childrenMode = flags.values.get("children");
   if (childrenMode !== undefined && !CHILDREN_MODES.has(childrenMode)) {
-    throw new AgCliError("invalid_usage", `--children expects any or all, got ${childrenMode}`);
+    throw new NullgError("invalid_usage", `--children expects any or all, got ${childrenMode}`);
   }
   const timeoutSec = parseTimeout(flags.values.get("timeout"));
 
@@ -47,7 +47,7 @@ export async function runWaitCommand(
     if (childrenMode !== undefined) {
       const owner = flags.positionals[0] ?? callerId;
       if (owner === undefined) {
-        throw new AgCliError(
+        throw new NullgError(
           "invalid_usage",
           "missing_target: --children needs a caller conversation",
           {
@@ -456,7 +456,7 @@ function parseTimeout(raw: string | undefined): number {
   }
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 0) {
-    throw new AgCliError("invalid_usage", `--timeout expects a non-negative integer, got ${raw}`);
+    throw new NullgError("invalid_usage", `--timeout expects a non-negative integer, got ${raw}`);
   }
   return value;
 }

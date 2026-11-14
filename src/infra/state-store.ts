@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { assertAlias, assertUuid } from "../domain/validation";
-import { AgCliError } from "../types/protocol";
+import { NullgError } from "../types/protocol";
 
 export interface ManagedRow {
   shortId: number;
@@ -313,8 +313,8 @@ export class StateStore {
         .prepare("SELECT conversation_id FROM conversations WHERE name = ?")
         .get(options.name) as RawRow | undefined;
       if (holder !== undefined && String(holder.conversation_id) !== conversationId) {
-        throw new AgCliError("name_conflict", `name ${options.name} is already in use`, {
-          hint: "Pick another name, use --reuse, or ag-cli rm the old conversation.",
+        throw new NullgError("name_conflict", `name ${options.name} is already in use`, {
+          hint: "Pick another name, use --reuse, or nullg rm the old conversation.",
         });
       }
     }
@@ -378,12 +378,12 @@ export class StateStore {
 
   setLabels(conversationId: string, pairs: string[]): void {
     if (this.findByConversationId(conversationId) === undefined) {
-      throw new AgCliError("not_found", `conversation ${conversationId} is not managed by ag-cli`);
+      throw new NullgError("not_found", `conversation ${conversationId} is not managed by nullg`);
     }
     const parsed = pairs.map((pair) => {
       const separator = pair.indexOf("=");
       if (separator < 1) {
-        throw new AgCliError("invalid_usage", `invalid label ${pair}`, {
+        throw new NullgError("invalid_usage", `invalid label ${pair}`, {
           hint: "Use key=value or key= to remove.",
         });
       }

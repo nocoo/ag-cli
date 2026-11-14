@@ -1,15 +1,15 @@
 {
-  "name": "ag-cli",
+  "name": "nullg",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
   "description": "CLI runtime wrapper that dispatches tasks to local Antigravity conversations",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nocoo/ag-cli.git"
+    "url": "git+https://github.com/nocoo/nullg.git"
   },
   "bin": {
-    "ag-cli": "dist/index.js"
+    "nullg": "dist/index.js"
   },
   "files": [
     "dist/index.js",
@@ -23,7 +23,7 @@
     "test:coverage": "vitest run --project unit --coverage",
     "test:integration": "vitest run --project integration",
     "test:e2e": "vitest run --project e2e",
-    "build": "bun build src/index.ts --target node --banner \"#!/usr/bin/env node\" --outfile dist/index.js && cp src/cli/skill.md dist/skill.md && bun build src/index.ts --compile --outfile dist/ag-cli",
+    "build": "bun build src/index.ts --target node --banner \"#!/usr/bin/env node\" --outfile dist/index.js && cp src/cli/skill.md dist/skill.md && bun build src/index.ts --compile --outfile dist/nullg",
     "ci:package": "bun run scripts/check-package.ts",
     "prepare": "git config core.hooksPath scripts/hooks || true"
   },

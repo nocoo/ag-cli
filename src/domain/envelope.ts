@@ -1,20 +1,20 @@
-import { AgCliError } from "../types/protocol";
+import { NullgError } from "../types/protocol";
 import { assertTerminalId, isUuid } from "./validation";
 
 export type CallerContext =
-  | { kind: "ag-cli"; conversationId: string; shortId?: number; name?: string }
+  | { kind: "nullg"; conversationId: string; shortId?: number; name?: string }
   | { kind: "hc"; terminalId: string };
 
 export function detectCallerContext(env: Record<string, string | undefined>): CallerContext | null {
   const conversationId =
-    env.AG_CLI_CALLER_ID?.trim() || env.ANTIGRAVITY_CONVERSATION_ID?.trim() || "";
+    env.NULLG_CALLER_ID?.trim() || env.ANTIGRAVITY_CONVERSATION_ID?.trim() || "";
   if (conversationId.length > 0) {
     if (!isUuid(conversationId)) {
-      throw new AgCliError("invalid_usage", `invalid caller conversation id ${conversationId}`, {
+      throw new NullgError("invalid_usage", `invalid caller conversation id ${conversationId}`, {
         hint: "Caller conversation ids must be 36-character UUIDs.",
       });
     }
-    return { kind: "ag-cli", conversationId };
+    return { kind: "nullg", conversationId };
   }
   const terminalId = env.HC_TERMINAL_ID?.trim() || "";
   if (terminalId.length > 0) {
@@ -51,18 +51,18 @@ export function buildEnvelope(
       : caller.shortId !== undefined
         ? `c${caller.shortId} ${caller.conversationId.slice(0, 8)}`
         : caller.conversationId;
-  const runtime = caller.kind === "hc" ? "hc" : "ag-cli";
+  const runtime = caller.kind === "hc" ? "hc" : "nullg";
   const reach = `${runtime} send ${target} \\"<summary or artifact path>\\" when done or blocked`;
   return (
-    `<ag-cli from="${escapeXmlAttribute(from)}" cwd="${escapeXmlAttribute(options.cwd)}" ` +
+    `<nullg from="${escapeXmlAttribute(from)}" cwd="${escapeXmlAttribute(options.cwd)}" ` +
     `reach="${reach}">\n` +
     `${message}\n` +
-    `</ag-cli>`
+    `</nullg>`
   );
 }
 
 export function buildContextEnvelope(message: string, options: { cwd: string }): string {
-  return `<ag-cli cwd="${escapeXmlAttribute(options.cwd)}">\n${message}\n</ag-cli>`;
+  return `<nullg cwd="${escapeXmlAttribute(options.cwd)}">\n${message}\n</nullg>`;
 }
 
 export function wrapOutboundPrompt(

@@ -27,23 +27,23 @@ function main(): void {
   const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
     bin?: Record<string, string>;
   };
-  const binPath = pkg.bin?.["ag-cli"];
+  const binPath = pkg.bin?.nullg;
   assert(
     binPath === "dist/index.js" || binPath === "./dist/index.js",
-    `package.json bin["ag-cli"] must be "dist/index.js" or "./dist/index.js", got ${binPath}`,
+    `package.json bin["nullg"] must be "dist/index.js" or "./dist/index.js", got ${binPath}`,
   );
 
   console.log("check-package: running bun run build");
   execFileSync("bun", ["run", "build"], { cwd: repoRoot, stdio: "inherit" });
 
-  const binaryPath = join(repoRoot, "dist", "ag-cli");
-  assert(existsSync(binaryPath), "dist/ag-cli missing: the compiled binary was not built");
+  const binaryPath = join(repoRoot, "dist", "nullg");
+  assert(existsSync(binaryPath), "dist/nullg missing: the compiled binary was not built");
   execFileSync(binaryPath, ["--help"], { cwd: repoRoot, stdio: "inherit" });
   execFileSync(binaryPath, ["--skill"], { cwd: repoRoot, stdio: "inherit" });
   console.log("check-package: compiled binary --help and --skill verified");
 
-  const packDir = mkdtempSync(join(tmpdir(), "ag-cli-pack-"));
-  const installDir = mkdtempSync(join(tmpdir(), "ag-cli-install-"));
+  const packDir = mkdtempSync(join(tmpdir(), "nullg-pack-"));
+  const installDir = mkdtempSync(join(tmpdir(), "nullg-install-"));
   try {
     const packOutput = run("npm", ["pack", "--pack-destination", packDir, "--json"], {
       cwd: repoRoot,
@@ -66,21 +66,21 @@ function main(): void {
       run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarballPath], {
         cwd: installDir,
       });
-      const installedEntry = join(installDir, "node_modules/ag-cli/dist/index.js");
+      const installedEntry = join(installDir, "node_modules/nullg/dist/index.js");
       assert(existsSync(installedEntry), `installed entry missing: ${installedEntry}`);
       assert(
-        existsSync(join(installDir, "node_modules/.bin/ag-cli")),
-        "node_modules/.bin/ag-cli link missing after install",
+        existsSync(join(installDir, "node_modules/.bin/nullg")),
+        "node_modules/.bin/nullg link missing after install",
       );
 
       const firstLine = readFileSync(installedEntry, "utf8").split("\n")[0] ?? "";
       assert(firstLine.startsWith("#!"), `installed dist/index.js lacks shebang: ${firstLine}`);
 
-      execFileSync(join(installDir, "node_modules/.bin/ag-cli"), ["--help"], {
+      execFileSync(join(installDir, "node_modules/.bin/nullg"), ["--help"], {
         cwd: installDir,
         stdio: "inherit",
       });
-      execFileSync(join(installDir, "node_modules/.bin/ag-cli"), ["--skill"], {
+      execFileSync(join(installDir, "node_modules/.bin/nullg"), ["--skill"], {
         cwd: installDir,
         stdio: "inherit",
       });

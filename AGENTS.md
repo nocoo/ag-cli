@@ -1,6 +1,6 @@
 # AGENTS.md
 
-`ag-cli` is a CLI runtime wrapper around the local
+`nullg` is a CLI runtime wrapper around the local
 Antigravity installation: external CLI bots and Antigravity conversations
 dispatch tasks, wait on events, and collect structured results.
 
@@ -10,7 +10,7 @@ dispatch tasks, wait on events, and collect structured results.
 | -------------- | ------------------------------------------------------------ |
 | Contracts      | `docs/01`–`05` (locked); update docs before changing behavior |
 | Accidents      | `Retrospective.md`                                           |
-| Package        | npm `ag-cli`, bin `ag-cli` -> `./dist/index.js`              |
+| Package        | npm `nullg`, bin `nullg` -> `./dist/index.js`              |
 
 ## Commands
 
@@ -21,7 +21,7 @@ bun run lint             # S2 biome check --error-on-warnings .
 bun run test:coverage    # L1 unit coverage >= 95% (statements/branches/functions/lines)
 bun run test:integration # L3
 bun run test:e2e         # L4
-bun run build            # B1 dist/index.js + dist/skill.md + dist/ag-cli (compiled binary)
+bun run build            # B1 dist/index.js + dist/skill.md + dist/nullg (compiled binary)
 bun run ci:package       # P1 npm pack + bin smoke test
 ```
 
@@ -37,12 +37,12 @@ must keep zero direct upstream URLs: `rg -c '", "https' bun.lock` stays empty.
   (engine-level write rejection, matching `docs/03` §5.3). File-level
   `readOnly: true` is not used: Bun cannot query a WAL database that has no
   live writer and therefore no `-shm` file.
-- Tests never touch real `~/.gemini/antigravity` or `~/.local/share/ag-cli`.
-  Always isolate via `AG_CLI_HOME`, `AG_CLI_CONFIG_DIR`,
-  `AG_CLI_ANTIGRAVITY_DIR`, `AG_CLI_AGENTAPI_BIN` into temp dirs
+- Tests never touch real `~/.gemini/antigravity` or `~/.local/share/nullg`.
+  Always isolate via `NULLG_HOME`, `NULLG_CONFIG_DIR`,
+  `NULLG_ANTIGRAVITY_DIR`, `NULLG_AGENTAPI_BIN` into temp dirs
   (`tests/helpers/sandbox.ts`).
 - `conversation_summaries.db` is strictly read-only (`PRAGMA query_only = ON`);
-  ag-cli writes only its own `state.db`.
+  nullg writes only its own `state.db`.
 - State derives from observed facts only; never regex-guess model prose.
 - Strict TDD per `docs/05`: Red -> Green -> Refactor -> Gate, then an atomic
   commit on `main` (Conventional Commits, <= 50 chars, explicit `git add`).

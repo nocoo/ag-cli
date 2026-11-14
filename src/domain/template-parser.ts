@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { assertInside } from "../infra/path-safety";
-import { AgCliError } from "../types/protocol";
+import { NullgError } from "../types/protocol";
 
 export interface ParsedTemplate {
   name?: string;
@@ -25,7 +25,7 @@ export function parseTemplate(text: string): ParsedTemplate {
   const match = FRONTMATTER_RE.exec(text);
   if (match === null) {
     if (/^---(\r?\n|$)/.test(text)) {
-      throw new AgCliError("invalid_usage", "malformed template frontmatter");
+      throw new NullgError("invalid_usage", "malformed template frontmatter");
     }
     return { preamble: text.trim() };
   }
@@ -34,29 +34,29 @@ export function parseTemplate(text: string): ParsedTemplate {
     values = parseYaml(match[1] as string);
   } catch (error) {
     const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
-    throw new AgCliError("invalid_usage", `malformed template frontmatter: ${reason}`);
+    throw new NullgError("invalid_usage", `malformed template frontmatter: ${reason}`);
   }
   if (values === null || values === undefined) {
     values = {};
   }
   if (typeof values !== "object" || Array.isArray(values)) {
-    throw new AgCliError("invalid_usage", "template frontmatter must be a mapping");
+    throw new NullgError("invalid_usage", "template frontmatter must be a mapping");
   }
   const parsed: ParsedTemplate = { preamble: (match[2] as string).trim() };
   for (const [key, value] of Object.entries(values as Record<string, unknown>)) {
     if ((STRING_FIELDS as readonly string[]).includes(key)) {
       if (typeof value !== "string" || value.trim().length === 0) {
-        throw new AgCliError("invalid_usage", `template field ${key} must be a non-empty string`);
+        throw new NullgError("invalid_usage", `template field ${key} must be a non-empty string`);
       }
       parsed[key as (typeof STRING_FIELDS)[number]] = value.replace(/\n+$/, "");
     } else if ((BOOLEAN_FIELDS as readonly string[]).includes(key)) {
       if (typeof value !== "boolean") {
-        throw new AgCliError("invalid_usage", `template field ${key} must be a boolean`);
+        throw new NullgError("invalid_usage", `template field ${key} must be a boolean`);
       }
       parsed[key as (typeof BOOLEAN_FIELDS)[number]] = value;
     } else if (key === "timeout") {
       if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-        throw new AgCliError(
+        throw new NullgError(
           "invalid_usage",
           "template field timeout must be a non-negative integer",
         );
@@ -74,7 +74,7 @@ export function templatePath(configDir: string, name: string): string {
     name.includes("/") ||
     name.includes("\\")
   ) {
-    throw new AgCliError("invalid_usage", `invalid template name ${name}`, {
+    throw new NullgError("invalid_usage", `invalid template name ${name}`, {
       hint: "Template names match ^[a-zA-Z0-9._-]+$.",
     });
   }
@@ -87,8 +87,8 @@ export function loadTemplate(
 ): { path: string; template: ParsedTemplate } {
   const path = templatePath(configDir, name);
   if (!existsSync(path)) {
-    throw new AgCliError("not_found", `template ${name} not found`, {
-      hint: "Run `ag-cli templates` to list installed templates.",
+    throw new NullgError("not_found", `template ${name} not found`, {
+      hint: "Run `nullg templates` to list installed templates.",
     });
   }
   assertInside(join(configDir, "templates"), path, {

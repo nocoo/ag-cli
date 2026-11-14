@@ -2,7 +2,7 @@ import { resolveTarget } from "../../domain/target-resolver";
 import { resolvePaths } from "../../infra/paths";
 import { StateStore } from "../../infra/state-store";
 import { openSummariesReader } from "../../infra/summaries-reader";
-import { AgCliError } from "../../types/protocol";
+import { NullgError } from "../../types/protocol";
 import { emitJson, emitText, resolveMode, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
 import { buildTargetRegistry, currentCallerId } from "./registry";
@@ -14,9 +14,9 @@ export async function runLabelCommand(
   const flags = parseCommandFlags(args, { booleans: ["json"], values: [] });
   if (flags.positionals.length < 2) {
     if (flags.positionals.length === 0) {
-      throw new AgCliError("invalid_usage", "label requires a target");
+      throw new NullgError("invalid_usage", "label requires a target");
     }
-    throw new AgCliError("invalid_usage", "label requires at least one key=value pair");
+    throw new NullgError("invalid_usage", "label requires at least one key=value pair");
   }
   const target = flags.positionals[0] as string;
   const pairs = flags.positionals.slice(1);

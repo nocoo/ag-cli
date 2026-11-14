@@ -1,6 +1,6 @@
 # 02 · CLI 接口与交互协议
 
-> 状态：`v0.3-locked`（2026-11-14 · 已锁定包名与 CLI 命令 `ag-cli`）
+> 状态：`v0.3-locked`（2026-11-14 · 已锁定包名与 CLI 命令 `nullg`）
 > 索引：[docs/README.md](./README.md)
 > 前置文档：[01-overview-and-architecture.md](./01-overview-and-architecture.md)
 > 详细状态机制：[03-state-and-storage.md](./03-state-and-storage.md)
@@ -9,12 +9,12 @@
 
 ## 1. CLI 顶层概览
 
-`ag-cli` 的子命令命名、分组及输出心智严格对齐 `hc --help`：
+`nullg` 的子命令命名、分组及输出心智严格对齐 `hc --help`：
 
 ```text
-ag-cli - dispatch tasks to local Antigravity conversations and collect results
+nullg - dispatch tasks to local Antigravity conversations and collect results
 
-Usage: ag-cli <command> [options]
+Usage: nullg <command> [options]
 
 Conversations
   run [template] <prompt>     Start (or --reuse) a conversation and wait (--bg: don't wait)
@@ -22,7 +22,7 @@ Conversations
   get [c]                     Show observed state, status, tokens, and artifacts
   read [c]                    Print the latest reply and artifacts (--steps: show trace)
   kill <c>                    Cancel a running turn or mark conversation terminated
-  rm <c>                      Remove a conversation from ag-cli registry (--purge-brain: delete files)
+  rm <c>                      Remove a conversation from nullg registry (--purge-brain: delete files)
   label <c> <k=v...>          Set or clear labels (key= removes)
 
 Talk & Wait
@@ -31,40 +31,41 @@ Talk & Wait
   wait [c]                    Wait until done, blocked, or error (--children: any|all)
 
 More
-  templates                   List templates (~/.config/ag-cli/templates)
+  templates                   List templates (~/.config/nullg/templates)
   events                      Follow state and step changes live (JSON Lines when piped)
   status                      Inspect Antigravity daemon, database, and agentapi health
   schema                      Print the CLI/API JSON Schema
 
 <c> is a target like c7, a name (clip-worker), a UUID prefix, or a full UUID.
 Piped output is JSON except `run` (text status/summary) and `read` (Markdown reply).
-Use `ag-cli <command> --help` for exact arguments.
-Agent? Run: ag-cli --skill
+Use `nullg <command> --help` for exact arguments.
+Agent? Run: nullg --skill
 ```
 
 ### 1.1 输出模式契约（TTY vs Piped vs `--json`）
 
 | 命令 | TTY 终端直接运行 | 管道输出（Piped） | 显式传入 `--json` |
 | --- | --- | --- | --- |
-| `ag-cli run` | 等待时实时进度；结束输出摘要文本 | 同步时输出最终结果文本；`--bg` 时输出单行摘要 | 始终输出完整 JSON 对象 |
-| `ag-cli read` | 格式化输出 Markdown 回复与 Artifacts 路径 | 仅输出纯净回复正文（方便重定向到文件或管道） | 输出包含 `reply`、`artifacts`、`steps`、`telemetry` 的完整 JSON |
-| `ag-cli ls` / `ag-cli get` / `ag-cli status` / `ag-cli templates` / `ag-cli send` / `ag-cli wait` | 人类可读的紧凑表格或键值摘要 | **自动切换为 JSON**（对齐 `hc` 设计） | 始终输出 JSON |
-| `ag-cli events` | 人类可读的事件时间线 | 逐行输出 JSON Lines（NDJSON） | 逐行输出 JSON Lines（NDJSON） |
+| `nullg run` | 等待时实时进度；结束输出摘要文本 | 同步时输出最终结果文本；`--bg` 时输出单行摘要 | 始终输出完整 JSON 对象 |
+| `nullg read` | 格式化输出 Markdown 回复与 Artifacts 路径 | 仅输出纯净回复正文（方便重定向到文件或管道） | 输出包含 `reply`、`artifacts`、`steps`、`telemetry` 的完整 JSON |
+| `nullg ls` / `nullg get` / `nullg status` / `nullg templates` / `nullg send` / `nullg wait` | 人类可读的紧凑表格或键值摘要 | **自动切换为 JSON**（对齐 `hc` 设计） | 始终输出 JSON |
+| `nullg events` | 人类可读的事件时间线 | 逐行输出 JSON Lines（NDJSON） | 逐行输出 JSON Lines（NDJSON） |
 
 ### 1.2 NPM 包名与 CLI 命令名实测及决议（D2）
 
-在锁定包名与二进制命令名前，通过项目环境允许的 NPM 镜像（`https://packagefeedproxy.microsoft.io/npm/`）与本机 `PATH` 进行了实测排查：
+在锁定包名与二进制命令名前，通过官方 NPM 注册表（`https://registry.npmjs.org/`）及去连字符/复数变体、本机 `PATH` 进行了实测排查：
 
 | 候选名称 | NPM 注册表状态 | 本机 `PATH` 占用 | 说明 |
 | --- | --- | --- | --- |
-| `ag-cli` | **可用（HTTP 404）** | 无冲突 | Antigravity CLI 语义最直观，包名与命令名完全一致 |
-| `team-gravity` / `@nocoo/team-gravity` | **可用（HTTP 404）** | 无冲突 | 原暂定仓库名及备选 Scope 包名（现仓库已统一为 `ag-cli`） |
+| `nullg` | **可用（`nullg` / `null-g` / `nullgs` 均 HTTP 404）** | 无冲突 | Null-G 语义简洁且避开品牌词，包名、命令名与仓库名完全一致 |
+| `ag-cli` | **`GET` HTTP 404，`PUT` 发布 HTTP 403** | 无冲突 | npm 无 scope 相似名规则会去除连字符比对，因已存在 `agcli` 被服务端拒绝 |
+| `team-gravity` / `@nocoo/team-gravity` | **可用（HTTP 404）** | 无冲突 | 原暂定仓库名及备选 Scope 包名（现已统一为 `nullg`） |
 | `tg` | **已被占用（HTTP 200）** | 无冲突 | NPM 包名已被第三方占坑 |
-| `antigravity-cli` | **已被占用（HTTP 200）** | — | NPM 包名已被占用 |
+| `antigravity-cli` | **已被占用（HTTP 200）** | — | NPM 包名已被占用（且含 `antigravity` 品牌词） |
 
 **已锁定决议（D2）**：
-- **NPM 包名**：锁定为 **`ag-cli`**（`package.json` `"name": "ag-cli"`）。
-- **CLI 命令入口**：在 `package.json` `"bin"` 暴露主命令 **`"ag-cli": "./dist/index.js"`**；单二进制构建默认输出 `dist/ag-cli`。
+- **NPM 包名**：锁定为 **`nullg`**（`package.json` `"name": "nullg"`）。
+- **CLI 命令入口**：在 `package.json` `"bin"` 暴露主命令 **`"nullg": "dist/index.js"`**；单二进制构建默认输出 `dist/nullg`。
 
 ---
 
@@ -75,27 +76,27 @@ Agent? Run: ag-cli --skill
 1. **精确别名（`name`）**：在 `state.db` 活跃会话（或开启 `--all` 时含已归档）中匹配唯一 `name`（校验规则与 `hc` 一致：`^[a-z0-9][a-z0-9_-]{0,31}$`）。
 2. **本地短 ID（`cN`）**：如 `c1`、`c7`、`c42`（匹配 `^c[0-9]+$`），对应 `state.db` 自增主键。
 3. **UUID 唯一前缀**：长度 `>= 4` 的十六进制前缀（如 `990014f6`），同时扫描 `state.db` 与 `conversation_summaries.db`；若匹配多条则报错 `ambiguous_target` 并列出候选 ID 与标题，绝不猜测。
-4. **完整 36 位 UUID**：直接匹配精确 `conversation_id`（即使该会话最初不是由 `ag-cli` 创建，只要存在于 Antigravity 数据库或 `/brain/` 目录中即可接管交互）。
+4. **完整 36 位 UUID**：直接匹配精确 `conversation_id`（即使该会话最初不是由 `nullg` 创建，只要存在于 Antigravity 数据库或 `/brain/` 目录中即可接管交互）。
 
 ### 默认目标推导
 - 当从 Antigravity 会话内部 shell 调用（存在环境变量 `ANTIGRAVITY_CONVERSATION_ID`）且省略 `[c]` 时：
-  - `ag-cli get`、`ag-cli read` 默认指向当前自身会话；
-  - `ag-cli wait --children <any|all>` 默认等待当前会话派生的所有子会话。
+  - `nullg get`、`nullg read` 默认指向当前自身会话；
+  - `nullg wait --children <any|all>` 默认等待当前会话派生的所有子会话。
 - 在外部终端调用且省略 `[c]` 时：若未指定 `--children` 或目标，报错 `missing_target`（退出码 `2`）。
 
 ---
 
 ## 3. 逐命令详细规范
 
-### 3.1 `ag-cli run` — 创建或复用会话并派发任务
+### 3.1 `nullg run` — 创建或复用会话并派发任务
 
 ```text
-Usage: ag-cli run [OPTIONS] [TEMPLATE_OR_PROMPT] [PROMPT]
+Usage: nullg run [OPTIONS] [TEMPLATE_OR_PROMPT] [PROMPT]
 ```
 
 **参数解析逻辑**：
 - 仅传入 1 个位置参数时，视为 `<PROMPT>`。
-- 传入 2 个位置参数且第 1 个匹配 `~/.config/ag-cli/templates/<name>.md` 时，第 1 个为 `<TEMPLATE>`，第 2 个为 `<PROMPT>`；否则报 `template_not_found`。
+- 传入 2 个位置参数且第 1 个匹配 `~/.config/nullg/templates/<name>.md` 时，第 1 个为 `<TEMPLATE>`，第 2 个为 `<PROMPT>`；否则报 `template_not_found`。
 
 **选项清单**：
 
@@ -111,12 +112,12 @@ Usage: ag-cli run [OPTIONS] [TEMPLATE_OR_PROMPT] [PROMPT]
 | `--label <K=V>` | string[] | `[]` | 可重复传参，为会话打标签（如 `--label task=deps-fix --label repo=clip`） |
 | `--parent <C>` | string | 自动探测 | 显式指定父会话（未传时若检测到 `$ANTIGRAVITY_CONVERSATION_ID` 或 `$HC_TERMINAL_ID` 则自动记录） |
 | `--no-parent` | boolean | `false` | 不绑定任何父子关系 |
-| `--no-notify` | boolean | `false` | 不在消息尾部注入 `<ag-cli ... reach="...">` 回调信封 |
-| `--raw` | boolean | `false` | 保持 prompt 原文一字不改，不注入 `<ag-cli>` 信封和工作区声明 |
+| `--no-notify` | boolean | `false` | 不在消息尾部注入 `<nullg ... reach="...">` 回调信封 |
+| `--raw` | boolean | `false` | 保持 prompt 原文一字不改，不注入 `<nullg>` 信封和工作区声明 |
 | `--timeout <SEC>` | integer | `180` | 同步模式（无 `--bg`）等待超时时间（秒）。超时后会话继续运行，返回退出码 `124` |
 | `--json` | boolean | 自动 | 强制输出 JSON |
 
-**`ag-cli run --bg --json` 返回示例**：
+**`nullg run --bg --json` 返回示例**：
 
 ```json
 {
@@ -133,37 +134,37 @@ Usage: ag-cli run [OPTIONS] [TEMPLATE_OR_PROMPT] [PROMPT]
 }
 ```
 
-**`ag-cli run` 同步模式超时行为**：
-- 超过 `--timeout` 秒未完成时，输出提示 `[ag-cli] still working as c12 (deps-clip, 990014f6-...)` 并以退出码 `124` 退出；Antigravity 会话在后台保持运行，后续可用 `ag-cli wait c12` 继续等待。
+**`nullg run` 同步模式超时行为**：
+- 超过 `--timeout` 秒未完成时，输出提示 `[nullg] still working as c12 (deps-clip, 990014f6-...)` 并以退出码 `124` 退出；Antigravity 会话在后台保持运行，后续可用 `nullg wait c12` 继续等待。
 
 ---
 
-### 3.2 `ag-cli send` — 向已有会话发送指令
+### 3.2 `nullg send` — 向已有会话发送指令
 
 ```text
-Usage: ag-cli send [OPTIONS] <C> <TEXT>
+Usage: nullg send [OPTIONS] <C> <TEXT>
 ```
 
 | 选项 | 类型 | 说明 |
 | --- | --- | --- |
 | `--if <STATUS>` | enum (`idle` \| `done` \| `working`) | 前置状态断言；不满足则拒绝发送并返回退出码 `3`（防并发踩踏） |
 | `--force` | boolean | 允许向当前处于 `blocked`（等待人工确认/回答问题）状态的会话发送消息 |
-| `--wait` | boolean | 发送后同步阻塞等待本轮执行完成（等价于发送后立即执行 `ag-cli wait <C>`） |
+| `--wait` | boolean | 发送后同步阻塞等待本轮执行完成（等价于发送后立即执行 `nullg wait <C>`） |
 | `--timeout <SEC>` | integer | 配合 `--wait` 使用，默认 `180` 秒 |
 | `--title <TITLE>` | string | 透传 `agentapi send-message --title` |
-| `--no-notify` / `--raw` | boolean | 同 `ag-cli run` |
+| `--no-notify` / `--raw` | boolean | 同 `nullg run` |
 | `--json` | boolean | 输出发送回执 JSON（含更新后的 `watermarkStep`） |
 
 **安全保护规则**：
-- 若目标会话当前处于 `blocked` 且未传 `--force`，`ag-cli send` 拒绝投递并返回错误码 `blocked_conversation`（提示先 `ag-cli read` 查看问题或审批）。
+- 若目标会话当前处于 `blocked` 且未传 `--force`，`nullg send` 拒绝投递并返回错误码 `blocked_conversation`（提示先 `nullg read` 查看问题或审批）。
 - 若目标会话当前处于 `working` 且未显式传 `--if working` 或 `--force`，默认仍允许排队发送（Antigravity 原生支持 queued user input），但在返回 JSON 中显式标记 `"queued": true`。
 
 ---
 
-### 3.3 `ag-cli wait` — 事件驱动等待会话完成
+### 3.3 `nullg wait` — 事件驱动等待会话完成
 
 ```text
-Usage: ag-cli wait [OPTIONS] [C]
+Usage: nullg wait [OPTIONS] [C]
 ```
 
 | 选项 | 类型 | 说明 |
@@ -172,7 +173,7 @@ Usage: ag-cli wait [OPTIONS] [C]
 | `--timeout <SEC>` | integer | 超时秒数，默认 `180`（`0` 表示无限等待）。超时返回退出码 `124` |
 | `--json` | boolean | 输出结构化等待结果 |
 
-**`ag-cli wait --json` 返回结构**：
+**`nullg wait --json` 返回结构**：
 
 ```json
 {
@@ -199,10 +200,10 @@ Usage: ag-cli wait [OPTIONS] [C]
 
 ---
 
-### 3.4 `ag-cli read` — 读取结构化回复、步骤轨迹与产物
+### 3.4 `nullg read` — 读取结构化回复、步骤轨迹与产物
 
 ```text
-Usage: ag-cli read [OPTIONS] [C]
+Usage: nullg read [OPTIONS] [C]
 ```
 
 | 选项 | 类型 | 默认值 | 说明 |
@@ -214,7 +215,7 @@ Usage: ag-cli read [OPTIONS] [C]
 | `--artifact <NAME>` | string | 无 | 直接读取 `~/.gemini/antigravity/brain/<conv_id>/<NAME>` 文件正文 |
 | `--json` | boolean | 自动 | 输出完整 JSON（含 `turns[]`, `artifacts[]`, `telemetry`） |
 
-**`ag-cli read <c>` 默认人类可读输出示例**：
+**`nullg read <c>` 默认人类可读输出示例**：
 
 ```markdown
 # c12 (deps-clip) · Turn 2 · done
@@ -226,7 +227,7 @@ Artifacts (1):
 - deps_fix_report_20261114.md  (/Users/nocoo/.gemini/antigravity/brain/990014f6-.../deps_fix_report_20261114.md)
 ```
 
-**`ag-cli read <c> --json` 输出 Schema 核心字段**：
+**`nullg read <c> --json` 输出 Schema 核心字段**：
 
 ```json
 {
@@ -255,61 +256,61 @@ Artifacts (1):
 
 ---
 
-### 3.5 `ag-cli ls` / `ag-cli get` / `ag-cli label` / `ag-cli kill` / `ag-cli rm` / `ag-cli interrupt`
+### 3.5 `nullg ls` / `nullg get` / `nullg label` / `nullg kill` / `nullg rm` / `nullg interrupt`
 
-- **`ag-cli ls [OPTIONS]`**：
-  - 默认展示所有由 `ag-cli` 管理或活跃中的会话（`--all` 展示 Antigravity 库中所有历史与非托管会话）。
+- **`nullg ls [OPTIONS]`**：
+  - 默认展示所有由 `nullg` 管理或活跃中的会话（`--all` 展示 Antigravity 库中所有历史与非托管会话）。
   - 支持 `--label <K=V>`（可多次叠加 AND 过滤）、`--children`（仅看当前 caller 子会话）、`--status <idle|working|done|blocked|error>`。
   - TTY 表格列：`SHORT` | `NAME` | `STATUS` | `TURN` | `STEPS` | `TITLE` | `PROJECT/CWD` | `UPDATED`。
-- **`ag-cli get [C]`**：
+- **`nullg get [C]`**：
   - 展示单条会话完整观测快照（ID、别名、标题、推导状态、父会话、Labels、Token 累加、Watermark、Artifact 列表、最新错误详情）。
-- **`ag-cli label <C> <K=V>...`**：
+- **`nullg label <C> <K=V>...`**：
   - 写入或删除（`key=`）`state.db` 中的标签，支持同名覆盖。
-- **`ag-cli interrupt <C>`**：
+- **`nullg interrupt <C>`**：
   - 向本地 `language_server` 调用 `CancelCascadeInvocation` RPC 中断当前正在进行的 turn（保留会话上下文，使状态退回可继续交互态）；若 RPC 不可用，返回明确错误提示，不假装成功。
-- **`ag-cli kill <C>`**：
-  - 先尝试 `CancelCascadeInvocation` 停止运行中步骤，然后在 `state.db` 标记该会话 `terminated = 1`（使其脱离默认 `ag-cli ls` 与 `--reuse` 池）。
-- **`ag-cli rm <C> [--purge-brain]`**：
-  - 从 `ag-cli` 本地 `state.db` 移除记录并释放 `name` 别名；**默认绝对不删除** `~/.gemini/antigravity/brain/<conv_id>` 与 `.db` 原生数据，仅在显式传入 `--purge-brain` 时才清理对应的 Artifact 目录。
+- **`nullg kill <C>`**：
+  - 先尝试 `CancelCascadeInvocation` 停止运行中步骤，然后在 `state.db` 标记该会话 `terminated = 1`（使其脱离默认 `nullg ls` 与 `--reuse` 池）。
+- **`nullg rm <C> [--purge-brain]`**：
+  - 从 `nullg` 本地 `state.db` 移除记录并释放 `name` 别名；**默认绝对不删除** `~/.gemini/antigravity/brain/<conv_id>` 与 `.db` 原生数据，仅在显式传入 `--purge-brain` 时才清理对应的 Artifact 目录。
 
 ---
 
-### 3.6 `ag-cli events` / `ag-cli templates` / `ag-cli status` / `ag-cli schema` / `ag-cli --skill`
+### 3.6 `nullg events` / `nullg templates` / `nullg status` / `nullg schema` / `nullg --skill`
 
-- **`ag-cli events [OPTIONS]`**：
+- **`nullg events [OPTIONS]`**：
   - 过滤参数：`--target <C>`、`--children-of <C>`、`--label <K=V>`。
   - 持续输出事件流（Piped / `--json` 下为 NDJSON）：`created`、`status`、`step`、`turn`、`artifact`、`heartbeat`（每 15s）。
-- **`ag-cli templates`**：
-  - 扫描 `~/.config/ag-cli/templates/*.md`，输出模板名、默认模型、默认 `profile` 及描述。
-- **`ag-cli status`**（别名 `ag-cli doctor`）：
+- **`nullg templates`**：
+  - 扫描 `~/.config/nullg/templates/*.md`，输出模板名、默认模型、默认 `profile` 及描述。
+- **`nullg status`**（别名 `nullg doctor`）：
   - 检查：① `~/.gemini/antigravity/daemon/hub_*.json` 是否存在且 PID 存活、`/healthz` 是否可达；② `conversation_summaries.db` 是否可读；③ `~/.gemini/antigravity/bin/agentapi` 是否存在可执行；④ `state.db` 状态。
-- **`ag-cli schema`**：
+- **`nullg schema`**：
   - 输出全量命令参数与 JSON 返回结构的 JSON Schema / OpenRPC 描述文档，方便外部工具自动生成客户端绑定。
-- **`ag-cli --skill`**：
+- **`nullg --skill`**：
   - 向 stdout 打印精炼自包含的 Agent 操作手册（详见 [04-skill-and-workflows.md](./04-skill-and-workflows.md)）。
 
 ---
 
-## 4. 跨 Agent 协同信封协议（`<ag-cli>` Envelope）
+## 4. 跨 Agent 协同信封协议（`<nullg>` Envelope）
 
-参考 `hc` 的 `<hc from="..." reach="...">` 机制，`ag-cli` 在 `ag-cli run` 与 `ag-cli send` 派发任务时（除非指定 `--no-notify` 或 `--raw`），自动探测调用者上下文并在消息头部/尾部注入轻量协同信封：
+参考 `hc` 的 `<hc from="..." reach="...">` 机制，`nullg` 在 `nullg run` 与 `nullg send` 派发任务时（除非指定 `--no-notify` 或 `--raw`），自动探测调用者上下文并在消息头部/尾部注入轻量协同信封：
 
 ### 4.1 场景 A：Antigravity 会话 → Antigravity 会话（同构调用）
 当环境变量存在 `ANTIGRAVITY_CONVERSATION_ID`（如 `a464a19f-...`）时，注入：
 
 ```text
-<ag-cli from="c3 a464a19f" cwd="/Users/nocoo/workspace/personal/clip" reach="ag-cli send c3 \"<summary or artifact path>\" when done or blocked">
+<nullg from="c3 a464a19f" cwd="/Users/nocoo/workspace/personal/clip" reach="nullg send c3 \"<summary or artifact path>\" when done or blocked">
 请升级 @biomejs/biome 并创建 PR。
-</ag-cli>
+</nullg>
 ```
 
 ### 4.2 场景 B：`hc` 终端里的 Bot（如 `pi` / Claude Code） → Antigravity 会话（异构跨界调用）
 当外部无 `ANTIGRAVITY_CONVERSATION_ID` 但检测到 `$HC_TERMINAL_ID`（如 `t7`）时，自动生成跨界回调指令：
 
 ```text
-<ag-cli from="hc:t7" cwd="/Users/nocoo/workspace/personal/clip" reach="hc send t7 \"<summary or artifact path>\" when done or blocked">
+<nullg from="hc:t7" cwd="/Users/nocoo/workspace/personal/clip" reach="hc send t7 \"<summary or artifact path>\" when done or blocked">
 请在浏览器验收 localhost:3000 登录流并将截图路径回传。
-</ag-cli>
+</nullg>
 ```
 
 这样被调用的 Antigravity 会话完成后，只需执行信封中给定的 `reach` 命令，即可把最终结果和 Artifact 路径精确送回 `hc` 终端里的 `pi` 或另一个 Antigravity 会话，实现完全异步、零轮询的网格协同。
@@ -325,7 +326,7 @@ Artifacts (1):
   "error": {
     "kind": "precondition_failed",
     "message": "conversation c12 (deps-clip) is currently working, expected idle",
-    "hint": "Run `ag-cli wait c12` first or omit `--if idle` to queue the message."
+    "hint": "Run `nullg wait c12` first or omit `--if idle` to queue the message."
   }
 }
 ```
@@ -337,4 +338,4 @@ Artifacts (1):
 | `2` | `invalid_usage` | 非法命令行参数、非法别名格式、缺少必填目标 |
 | `3` | `precondition_failed` | `--if <status>` 状态断言不满足 |
 | `4` | `daemon_unavailable` | 未找到存活的 `language_server` daemon 或 `agentapi` 不可用 |
-| `124` | `timeout` | `ag-cli run`（同步）或 `ag-cli wait` 到达 `--timeout` 超时（目标仍在后台运行） |
+| `124` | `timeout` | `nullg run`（同步）或 `nullg wait` 到达 `--timeout` 超时（目标仍在后台运行） |

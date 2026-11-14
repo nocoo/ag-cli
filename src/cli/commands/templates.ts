@@ -1,6 +1,6 @@
 import { listTemplates } from "../../domain/template-parser";
 import { resolvePaths } from "../../infra/paths";
-import { AgCliError } from "../../types/protocol";
+import { NullgError } from "../../types/protocol";
 import { emitJson, emitText, renderTable, resolveMode, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
 
@@ -10,7 +10,7 @@ export async function runTemplatesCommand(
 ): Promise<number> {
   const flags = parseCommandFlags(args, { booleans: ["json"], values: [] });
   if (flags.positionals.length !== 0) {
-    throw new AgCliError("invalid_usage", "templates takes no positional arguments");
+    throw new NullgError("invalid_usage", "templates takes no positional arguments");
   }
   const paths = resolvePaths(context.env);
   const rows = listTemplates(paths.configDir).map((entry) => ({

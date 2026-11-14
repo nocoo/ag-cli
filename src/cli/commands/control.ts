@@ -7,7 +7,7 @@ import { assertInside } from "../../infra/path-safety";
 import { resolvePaths } from "../../infra/paths";
 import { StateStore } from "../../infra/state-store";
 import { openSummariesReader } from "../../infra/summaries-reader";
-import { AgCliError } from "../../types/protocol";
+import { NullgError } from "../../types/protocol";
 import { emitJson, emitText, resolveMode, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
 import { buildTargetRegistry, currentCallerId } from "./registry";
@@ -21,7 +21,7 @@ export async function runControlCommand(
 ): Promise<number> {
   const flags = parseCommandFlags(args, { booleans: ["json", "purge-brain"], values: [] });
   if (flags.positionals.length !== 1) {
-    throw new AgCliError("invalid_usage", `${verb} requires exactly one target`);
+    throw new NullgError("invalid_usage", `${verb} requires exactly one target`);
   }
   const target = flags.positionals[0] as string;
 
@@ -74,8 +74,8 @@ export async function runControlCommand(
     assertUuid(conversationId);
     const row = store.findByConversationId(conversationId);
     if (row === undefined) {
-      throw new AgCliError("not_found", `conversation ${conversationId} is not managed by ag-cli`, {
-        hint: "Only ag-cli-registered conversations can be removed.",
+      throw new NullgError("not_found", `conversation ${conversationId} is not managed by nullg`, {
+        hint: "Only nullg-registered conversations can be removed.",
       });
     }
     const brainTarget = join(paths.brainDir, conversationId);

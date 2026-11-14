@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "ag-cli",
+      "name": "nullg",
       "dependencies": {
         "yaml": "^2.9.1",
       },

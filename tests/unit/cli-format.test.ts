@@ -7,7 +7,7 @@ import {
   renderTable,
   resolveMode,
 } from "../../src/cli/format";
-import { AgCliError } from "../../src/types/protocol";
+import { NullgError } from "../../src/types/protocol";
 
 function fakeStream(tty: boolean): {
   chunks: string[];
@@ -59,15 +59,15 @@ describe("emit helpers", () => {
 });
 
 describe("errorPayload", () => {
-  it("serializes AgCliError with kind, message and hint", () => {
-    const error = new AgCliError("not_found", "conversation c99 not found", {
-      hint: "Run ag-cli ls.",
+  it("serializes NullgError with kind, message and hint", () => {
+    const error = new NullgError("not_found", "conversation c99 not found", {
+      hint: "Run nullg ls.",
     });
     expect(errorPayload(error)).toEqual({
       error: {
         kind: "not_found",
         message: "conversation c99 not found",
-        hint: "Run ag-cli ls.",
+        hint: "Run nullg ls.",
       },
     });
   });
@@ -85,7 +85,7 @@ describe("errorPayload", () => {
 describe("emitError", () => {
   it("writes json to the stream in json mode", () => {
     const stream = fakeStream(false);
-    emitError(stream, new AgCliError("invalid_usage", "bad flag"), "json");
+    emitError(stream, new NullgError("invalid_usage", "bad flag"), "json");
     expect(stream.chunks).toHaveLength(1);
     expect(JSON.parse(stream.chunks[0] ?? "")).toEqual({
       error: { kind: "invalid_usage", message: "bad flag" },
@@ -94,14 +94,14 @@ describe("emitError", () => {
 
   it("writes plain text in text mode with hint", () => {
     const stream = fakeStream(true);
-    emitError(stream, new AgCliError("not_found", "missing", { hint: "try ls" }), "text");
+    emitError(stream, new NullgError("not_found", "missing", { hint: "try ls" }), "text");
     expect(stream.chunks.join("")).toContain("missing");
     expect(stream.chunks.join("")).toContain("try ls");
   });
 
   it("writes plain text without a hint line when the hint is absent", () => {
     const stream = fakeStream(true);
-    emitError(stream, new AgCliError("invalid_usage", "bad flag"), "text");
+    emitError(stream, new NullgError("invalid_usage", "bad flag"), "text");
     const text = stream.chunks.join("");
     expect(text).toContain("bad flag");
     expect(text).not.toContain("hint:");

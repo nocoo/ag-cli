@@ -13,7 +13,7 @@ import {
 const active: Sandbox[] = [];
 
 function sandbox(): Sandbox {
-  const created = createSandbox("ag-cli-int-wait");
+  const created = createSandbox("nullg-int-wait");
   active.push(created);
   return created;
 }
@@ -63,7 +63,7 @@ describe("wait against the live mock stack", () => {
       .run(parent, "owner");
     ownerDb.close();
 
-    const ctx = context({ ...instance.env, AG_CLI_CALLER_ID: parent });
+    const ctx = context({ ...instance.env, NULLG_CALLER_ID: parent });
     const waitPromise = runCli(["wait", "--children", "any", "--json", "--timeout", "10"], ctx);
     await new Promise((resolve) => setTimeout(resolve, 400));
     runAgentapi(instance, ["send-message", "--conversation-id", child, "--message", "finish it"]);

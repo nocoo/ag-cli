@@ -29,7 +29,7 @@ for oid in "${oids[@]}"; do
   [ "$duplicate" -eq 0 ] && unique+=("$oid")
 done
 
-snapshots=$(mktemp -d "${TMPDIR:-/tmp}/ag-cli-pre-push.XXXXXX")
+snapshots=$(mktemp -d "${TMPDIR:-/tmp}/nullg-pre-push.XXXXXX")
 trap 'rm -rf "$snapshots"' EXIT
 
 verify_installed_versions() {

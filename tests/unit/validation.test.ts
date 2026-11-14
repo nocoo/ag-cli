@@ -7,7 +7,7 @@ import {
   isUuid,
   TERMINAL_ID_RE,
 } from "../../src/domain/validation";
-import type { AgCliError } from "../../src/types/protocol";
+import type { NullgError } from "../../src/types/protocol";
 
 describe("uuid validation", () => {
   it("accepts canonical uuids in any case", () => {
@@ -37,16 +37,16 @@ describe("uuid validation", () => {
       assertUuid("../../victim");
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("invalid_usage");
-      expect((error as AgCliError).exitCode).toBe(2);
+      expect((error as NullgError).kind).toBe("invalid_usage");
+      expect((error as NullgError).exitCode).toBe(2);
     }
 
     try {
       assertUuid("nope", "upstream");
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("runtime_error");
-      expect((error as AgCliError).exitCode).toBe(1);
+      expect((error as NullgError).kind).toBe("runtime_error");
+      expect((error as NullgError).exitCode).toBe(1);
     }
   });
 });
@@ -66,7 +66,7 @@ describe("alias validation", () => {
         assertAlias(bad);
         expect.unreachable(`must throw for ${bad}`);
       } catch (error) {
-        expect((error as AgCliError).kind).toBe("invalid_usage");
+        expect((error as NullgError).kind).toBe("invalid_usage");
       }
     }
     expect(assertAlias("deps-clip")).toBe("deps-clip");
@@ -98,7 +98,7 @@ describe("terminal id validation", () => {
       assertTerminalId("t7; rm -rf /");
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("invalid_usage");
+      expect((error as NullgError).kind).toBe("invalid_usage");
     }
   });
 });

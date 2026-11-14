@@ -17,7 +17,7 @@ const active: Sandbox[] = [];
 const servers: MockLanguageServer[] = [];
 
 function sandbox(): Sandbox {
-  const created = createSandbox("ag-cli-unit-misc");
+  const created = createSandbox("nullg-unit-misc");
   active.push(created);
   return created;
 }
@@ -182,7 +182,7 @@ describe("run with templates", () => {
 
     const conversationId = stdoutJson<{ conversationId: string }>(ctx).conversationId;
     const inbound = String(readTranscript(instance, conversationId)[0]?.content);
-    expect(inbound).toContain('<ag-cli cwd="/tmp/verify">');
+    expect(inbound).toContain('<nullg cwd="/tmp/verify">');
     expect(inbound).toContain("You are a dedicated browser QA verifier.");
     expect(inbound).toContain("Verify login flow on http://localhost:3000");
   });
@@ -415,9 +415,9 @@ describe("--skill", () => {
       const code = await runCli(args, ctx);
       expect(code).toBe(0);
       const text = stdoutText(ctx);
-      expect(text).toContain("# ag-cli manual");
-      expect(text).toContain("ag-cli wait");
-      expect(text).toContain("ag-cli read");
+      expect(text).toContain("# nullg manual");
+      expect(text).toContain("nullg wait");
+      expect(text).toContain("nullg read");
     }
   });
 });

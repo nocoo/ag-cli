@@ -7,13 +7,13 @@ import {
   parseTemplate,
   templatePath,
 } from "../../src/domain/template-parser";
-import type { AgCliError } from "../../src/types/protocol";
+import type { NullgError } from "../../src/types/protocol";
 import { createSandbox, type Sandbox } from "../helpers/sandbox";
 
 const active: Sandbox[] = [];
 
 function sandbox(): Sandbox {
-  const created = createSandbox("ag-cli-unit-template");
+  const created = createSandbox("nullg-unit-template");
   active.push(created);
   return created;
 }
@@ -214,8 +214,8 @@ describe("loadTemplate", () => {
       loadTemplate(instance.configDir, "ghost");
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("not_found");
-      expect((error as AgCliError).message).toContain("ghost");
+      expect((error as NullgError).kind).toBe("not_found");
+      expect((error as NullgError).message).toContain("ghost");
     }
   });
 });

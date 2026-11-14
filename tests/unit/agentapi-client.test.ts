@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentApiClient } from "../../src/infra/agentapi-client";
 import { openSummariesReader } from "../../src/infra/summaries-reader";
-import type { AgCliError } from "../../src/types/protocol";
+import type { NullgError } from "../../src/types/protocol";
 import {
   createSandbox,
   initSummariesDb,
@@ -19,7 +19,7 @@ const active: Sandbox[] = [];
 const servers: MockLanguageServer[] = [];
 
 function sandbox(): Sandbox {
-  const created = createSandbox("ag-cli-unit-agentapi");
+  const created = createSandbox("nullg-unit-agentapi");
   active.push(created);
   return created;
 }
@@ -72,8 +72,8 @@ describe("AgentApiClient.connect", () => {
       });
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("daemon_unavailable");
-      expect((error as AgCliError).exitCode).toBe(4);
+      expect((error as NullgError).kind).toBe("daemon_unavailable");
+      expect((error as NullgError).exitCode).toBe(4);
     }
   });
 
@@ -97,8 +97,8 @@ describe("AgentApiClient.connect", () => {
       });
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("daemon_unavailable");
-      expect((error as AgCliError).message).toContain("agentapi");
+      expect((error as NullgError).kind).toBe("daemon_unavailable");
+      expect((error as NullgError).message).toContain("agentapi");
     }
   });
 });
@@ -195,8 +195,8 @@ describe("agentapi subprocess wrappers", () => {
       await client.sendMessage("99999999-9999-4999-8999-999999999999", "ghost");
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("runtime_error");
-      expect((error as AgCliError).message).toContain("not_found");
+      expect((error as NullgError).kind).toBe("runtime_error");
+      expect((error as NullgError).message).toContain("not_found");
     }
   });
 
@@ -211,8 +211,8 @@ describe("agentapi subprocess wrappers", () => {
       await client.newConversation({ message: "x" });
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("runtime_error");
-      expect((error as AgCliError).message).toContain("non-JSON");
+      expect((error as NullgError).kind).toBe("runtime_error");
+      expect((error as NullgError).message).toContain("non-JSON");
     }
   });
 
@@ -227,8 +227,8 @@ describe("agentapi subprocess wrappers", () => {
       await client.newConversation({ message: "x" });
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("runtime_error");
-      expect((error as AgCliError).message).toContain("no conversationId");
+      expect((error as NullgError).kind).toBe("runtime_error");
+      expect((error as NullgError).message).toContain("no conversationId");
     }
 
     writeFileSync(
@@ -240,8 +240,8 @@ describe("agentapi subprocess wrappers", () => {
       await client.newConversation({ message: "x" });
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("runtime_error");
-      expect((error as AgCliError).message).toContain("garbage");
+      expect((error as NullgError).kind).toBe("runtime_error");
+      expect((error as NullgError).message).toContain("garbage");
     }
   });
 
@@ -261,7 +261,7 @@ describe("agentapi subprocess wrappers", () => {
     const client = await AgentApiClient.connect({
       antigravityDir: instance.antigravityDir,
       agentapiBin: instance.agentapiBin,
-      baseEnv: { ...process.env, AG_CLI_JUNK: 42 as unknown as string },
+      baseEnv: { ...process.env, NULLG_JUNK: 42 as unknown as string },
     });
     const created = await client.newConversation({ message: "env check" });
     expect(created.conversationId.length).toBe(36);
@@ -295,8 +295,8 @@ describe("agentapi subprocess wrappers", () => {
       await client.sendMessage("11111111-1111-4111-8111-111111111111", "x");
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("runtime_error");
-      expect((error as AgCliError).message).not.toContain("undefined");
+      expect((error as NullgError).kind).toBe("runtime_error");
+      expect((error as NullgError).message).not.toContain("undefined");
     }
   });
 
@@ -321,8 +321,8 @@ describe("agentapi subprocess wrappers", () => {
       await client.listProjects();
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("runtime_error");
-      expect((error as AgCliError).message).toContain("request failed");
+      expect((error as NullgError).kind).toBe("runtime_error");
+      expect((error as NullgError).message).toContain("request failed");
     }
   });
 
@@ -349,8 +349,8 @@ describe("Connect RPC helpers", () => {
       await client.newConversation({ message: "synthetic" });
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("runtime_error");
-      expect((error as AgCliError).exitCode).toBe(1);
+      expect((error as NullgError).kind).toBe("runtime_error");
+      expect((error as NullgError).exitCode).toBe(1);
     }
   });
 
@@ -366,8 +366,8 @@ describe("Connect RPC helpers", () => {
       await client.getConversationMetadata("../../victim");
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("runtime_error");
-      expect((error as AgCliError).exitCode).toBe(1);
+      expect((error as NullgError).kind).toBe("runtime_error");
+      expect((error as NullgError).exitCode).toBe(1);
     }
   });
 
@@ -417,7 +417,7 @@ describe("Connect RPC helpers", () => {
       client
         .listProjects()
         .then(() => "resolved" as const)
-        .catch((error: AgCliError) => {
+        .catch((error: NullgError) => {
           expect(error.kind).toBe("runtime_error");
           return "rejected" as const;
         }),
@@ -467,7 +467,7 @@ describe("Connect RPC helpers", () => {
       await client.listProjects();
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).message).toContain("invalid json");
+      expect((error as NullgError).message).toContain("invalid json");
     }
 
     const hanging = createServer((req, res) => {
@@ -508,8 +508,8 @@ describe("Connect RPC helpers", () => {
       await slowClient.listProjects();
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("runtime_error");
-      expect((error as AgCliError).message).toContain("deadline exceeded");
+      expect((error as NullgError).kind).toBe("runtime_error");
+      expect((error as NullgError).message).toContain("deadline exceeded");
     }
   });
 
@@ -590,8 +590,8 @@ describe("Connect RPC helpers", () => {
       await client.listProjects();
       expect.unreachable("must throw");
     } catch (error) {
-      expect((error as AgCliError).kind).toBe("runtime_error");
-      expect((error as AgCliError).message).toContain("ListProjects");
+      expect((error as NullgError).kind).toBe("runtime_error");
+      expect((error as NullgError).message).toContain("ListProjects");
     }
   });
 });

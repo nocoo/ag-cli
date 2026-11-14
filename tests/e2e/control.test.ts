@@ -41,7 +41,7 @@ async function runCli(
 }
 
 beforeAll(async () => {
-  instance = createSandbox("ag-cli-e2e-control");
+  instance = createSandbox("nullg-e2e-control");
   initSummariesDb(instance);
   writeMockAgentapi(instance);
   server = await startMockLanguageServer({ responses: { CancelCascadeInvocation: {} } });
