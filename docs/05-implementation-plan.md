@@ -92,32 +92,28 @@ team-gravity/
 
 ## 3. 分阶段实施计划与原子提交规划（Phase 0 – Phase 4）
 
-### Phase 0：工程初始化与质量基线
-1. 初始化 `package.json`、`tsconfig.json`、`biome.json`、`AGENTS.md` 与 `scripts/hooks`（`pre-commit`、`pre-push`）。
-2. 建立 `src/infra/paths.ts` 与测试沙箱 Harness 骨架。
-3. **验证门槛**：`bun run lint`、`bun run typecheck`、`bun test` 全绿。
+### 3.1 主分支原子化提交纪律
 
-### Phase 1：只读观测链路（`status` / `ls` / `get` / `read`）
-1. 实现 `DaemonDiscovery`（扫描 `hub_*.json`、校验 PID 存活与 `/healthz`）。
-2. 实现 `SummariesReader`（只读 `conversation_summaries.db`）与 `TranscriptParser`（`transcript.jsonl` / `transcript_full.jsonl` 解析与 Telemetry 累加）。
-3. 实现 `TargetResolver` 与 `StateMachine`（五态推导纯函数及完备单元测试）。
-4. 落地命令：`tg status`、`tg ls`、`tg get`、`tg read`（含 `--steps`、`--full`、`--artifact`、`--json`）。
+- **主分支直推演进**：全程直接在 `main` 主分支开发与迭代，不拉冗余 feature 分支。
+- **单逻辑单元原子提交**：每完成一个独立可验证的逻辑单元，必须在跑通当前类型检查、lint 与相关测试后立即执行原子化 commit。
+- **精确暂存与格式规范**：严格使用 Conventional Commits（小写祈使句、`<= 50` 字符）；始终显式 `git add <具体文件>`，禁止 `git add .` 或 `git add -A`；除非哥明确要求，否则不主动执行 `git push`。
 
-### Phase 2：控制面与状态管理（`run --bg` / `send` / `label` / `kill` / `rm` / `interrupt`）
-1. 实现 `TgStateStore`（`~/.local/share/team-gravity/state.db` 表初始化、短 ID 分配、别名唯一性与标签 CRUD）。
-2. 实现 `AgentApiClient`（零环境变量外部透传、Project ID 自动匹配、`CancelCascadeInvocation` HTTP 补位）。
-3. 实现 `EnvelopeInjector`（同构 `<tg>` 与跨界 `hc send` 自动探测注入）。
-4. 落地命令：`tg run --bg`（含 `--reuse` 幂等复用）、`tg send`（含 `--if` 与 `blocked` 拦截）、`tg label`、`tg interrupt`、`tg kill`、`tg rm`。
+### 3.2 阶段拆解与预期 Commit 序列
 
-### Phase 3：防竞态水位线与事件驱动引擎（`wait` / 同步 `run` / `events`）
-1. 实现 `TranscriptWatcher`（`fs.watch` + 增量 byte offset + 20ms 防抖 + 2s 轻量兜底校验）。
-2. 串联 Turn Watermark 写入与观测判定闭环，覆盖发送后短暂 `IDLE` 延迟场景测试。
-3. 落地命令：`tg wait`（含 `--children any|all` 与退出码 `124` 超时机制）、`tg run` 默认同步等待模式、`tg send --wait`、`tg events`（NDJSON 实时事件流）。
-
-### Phase 4：模板、内置 Skill、Schema 与联调验收
-1. 实现 `TemplateParser` 与 `tg templates`（读取 `~/.config/team-gravity/templates/*.md`）。
-2. 内置 `tg --skill` 与 `tg schema` 导出命令。
-3. 全链路 E2E 回归测试（含真机 `tg status` / `tg ls` / 沙箱 `tg run` 全流程验收），安装二进制到 `~/.local/bin/tg`。
+| 阶段 | Step | 交付内容与验证门槛 | 预期原子 Commit Message |
+| --- | --- | --- | --- |
+| **Phase 0** | 0.1 | 初始化 `package.json`、`tsconfig.json`、`biome.json`、`AGENTS.md` 与 `scripts/hooks`（`pre-commit`/`pre-push`） | `chore: initialize project toolchain and quality hooks` |
+| **Phase 0** | 0.2 | 实现 `src/infra/paths.ts`、协议类型 `src/types/protocol.ts` 与测试沙箱 Harness 骨架，验证 `lint`+`typecheck`+`test` 全绿 | `feat(infra): add path resolver and test harness` |
+| **Phase 1** | 1.1 | 实现 `DaemonDiscovery`（扫描 `hub_*.json`、校验 PID 与 `/healthz`）及单元测试 | `feat(infra): add antigravity daemon discovery` |
+| **Phase 1** | 1.2 | 实现只读 `SummariesReader`、`TranscriptParser`（`transcript.jsonl`/`transcript_full.jsonl`）及解析单测 | `feat(domain): add summaries and transcript readers` |
+| **Phase 1** | 1.3 | 实现 `TargetResolver`、`StateMachine`（五态推导纯函数）及真值表全覆盖测试 | `feat(domain): add target resolver and state machine` |
+| **Phase 1** | 1.4 | 落地 `tg status`、`tg ls`、`tg get`、`tg read`（含 `--steps`/`--full`/`--artifact`/`--json`）及集成测试 | `feat(cli): add read-only status ls get read commands` |
+| **Phase 2** | 2.1 | 实现 `TgStateStore`（`state.db` 初始化、短 ID 分配、别名唯一性与标签 CRUD）及存储测试 | `feat(infra): add local tg state store` |
+| **Phase 2** | 2.2 | 实现 `AgentApiClient`（零配置环境注入、`projectId` 自动匹配、`CancelCascadeInvocation` HTTP 补位）与 `EnvelopeInjector` | `feat(infra): add agentapi client and envelope injector` |
+| **Phase 2** | 2.3 | 落地 `tg run --bg`（含 `--reuse`）、`tg send`（含 `--if` 与 `blocked` 拦截）、`tg label`、`tg interrupt`、`tg kill`、`tg rm` | `feat(cli): add run send label control commands` |
+| **Phase 3** | 3.1 | 实现 `TranscriptWatcher`（`fs.watch` + 增量 byte offset + 20ms 防抖 + 2s 兜底校验）与 Turn Watermark 闭环验证 | `feat(infra): add fs-watch transcript engine` |
+| **Phase 3** | 3.2 | 落地 `tg wait`（含 `--children any|all` 与退出码 `124`）、同步 `tg run`、`tg send --wait`、`tg events`（NDJSON 流） | `feat(cli): add event-driven wait and events commands` |
+| **Phase 4** | 4.1 | 实现 `TemplateParser`、`tg templates`、`tg --skill` 与 `tg schema` 导出，补齐全链路 E2E 测试与单二进制构建 | `feat(cli): add templates skill schema and e2e suite` |
 
 ---
 
