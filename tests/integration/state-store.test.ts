@@ -54,16 +54,18 @@ describe("StateStore under real sqlite", () => {
     }
   });
 
-  it("restores watermarks only when the expected value matches", () => {
+  it("rolls back deliveries only when the ticket still owns the sequence", () => {
     const instance = sandbox();
     const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
     try {
       store.registerConversation(UUID_A, {});
-      store.updateWatermark(UUID_A, 5);
-      store.restoreWatermark(UUID_A, 5, 2);
-      expect(store.findByConversationId(UUID_A)?.watermarkStep).toBe(2);
-      store.restoreWatermark(UUID_A, 5, 9);
-      expect(store.findByConversationId(UUID_A)?.watermarkStep).toBe(2);
+      const ticket = store.beginDelivery(UUID_A, 5);
+      expect(store.rollbackDelivery(UUID_A, ticket)).toBe(true);
+      expect(store.findByConversationId(UUID_A)?.watermarkStep).toBe(-1);
+      const second = store.beginDelivery(UUID_A, 7);
+      expect(store.rollbackDelivery(UUID_A, ticket)).toBe(false);
+      expect(store.findByConversationId(UUID_A)?.watermarkStep).toBe(7);
+      store.rollbackDelivery(UUID_A, second);
       store.setLastTurn(UUID_A, 4);
       store.setLastTurn(UUID_A, 4);
       expect(store.findByConversationId(UUID_A)?.lastTurn).toBe(4);
@@ -78,7 +80,7 @@ describe("StateStore under real sqlite", () => {
     const path = join(instance.agCliHome, "state.db");
     const first = StateStore.open(path, { create: true });
     first?.registerConversation(UUID_A, { name: "alpha", cwd: "/tmp/repo", model: "flash" });
-    first?.updateWatermark(UUID_A, 3);
+    first?.beginDelivery(UUID_A, 3);
     first?.close();
 
     const second = StateStore.open(path);

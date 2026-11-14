@@ -1,7 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveTarget } from "../../domain/target-resolver";
-import { latestReply, mergeFullSteps, type TranscriptStep } from "../../domain/transcript-parser";
+import {
+  latestReply,
+  mergeFullSteps,
+  segmentTurns,
+  type TranscriptStep,
+} from "../../domain/transcript-parser";
 import { assertInside } from "../../infra/path-safety";
 import { resolvePaths } from "../../infra/paths";
 import { StateStore } from "../../infra/state-store";
@@ -53,6 +58,9 @@ export async function runReadCommand(
     booleans: ["json", "steps", "full"],
     values: ["turns", "lines", "artifact"],
   });
+  if (flags.positionals.length > 1) {
+    throw new AgCliError("invalid_usage", "read accepts at most one target");
+  }
   const turnsLimit = parsePositiveInt(flags.values.get("turns"), 1, "turns");
   const linesLimit = parsePositiveInt(flags.values.get("lines"), 50, "lines");
   const paths = resolvePaths(context.env);
@@ -66,11 +74,16 @@ export async function runReadCommand(
     if (flags.values.has("artifact")) {
       const name = flags.values.get("artifact") as string;
       const conversationDir = join(paths.brainDir, target.conversationId);
+      assertInside(paths.brainDir, conversationDir, {
+        mustExist: true,
+        hint: "Conversation brain directories must stay inside the brain root.",
+      });
       const path = join(conversationDir, name);
       if (!existsSync(path)) {
         throw new AgCliError("not_found", `artifact ${name} not found in ${target.conversationId}`);
       }
       assertInside(conversationDir, path, {
+        mustExist: true,
         hint: "Artifacts must stay inside the conversation brain dir.",
       });
       context.stdout.write(readFileSync(path, "utf8"));
@@ -84,8 +97,10 @@ export async function runReadCommand(
           loadFullTranscriptSteps(paths.antigravityDir, target.conversationId),
         )
       : observation.steps;
-    const reply = latestReply(steps)?.content ?? "";
-    const recentTurns = observation.turns.slice(-turnsLimit);
+    const turns = segmentTurns(steps);
+    const recentTurns = turns.slice(-turnsLimit);
+    const turnReplies = recentTurns.map((turn) => latestReply(turn.steps)?.content ?? "");
+    const reply = turnReplies.at(-1) ?? "";
 
     const mode = resolveMode({
       json: flags.flags.has("json"),
@@ -106,10 +121,10 @@ export async function runReadCommand(
           (store?.listLabels(target.conversationId) ?? []).map((label) => [label.key, label.value]),
         ),
         status: observation.status,
-        turn: recentTurns.length,
+        turn: turns.length,
         reply,
-        turns: recentTurns.map((turn) => ({
-          turn: turn.inboundStepIndex,
+        turns: recentTurns.map((turn, index) => ({
+          turn: turns.length - recentTurns.length + index + 1,
           inboundType: turn.inboundType,
           reply: latestReply(turn.steps)?.content ?? "",
         })),
@@ -132,9 +147,9 @@ export async function runReadCommand(
       emitText(
         context.stdout,
         [
-          `# ${label}${target.name !== undefined ? ` (${target.name})` : ""} · Turn ${observation.turns.length} · ${observation.status}`,
+          `# ${label}${target.name !== undefined ? ` (${target.name})` : ""} · Turn ${turns.length} · ${observation.status}`,
           "",
-          reply,
+          turnReplies.join("\n\n"),
           "---",
           `Artifacts (${observation.artifacts.length}):`,
           ...observation.artifacts.map((artifact) => `- ${artifact.name}  (${artifact.path})`),
@@ -143,7 +158,7 @@ export async function runReadCommand(
       return 0;
     }
 
-    emitText(context.stdout, reply);
+    emitText(context.stdout, turnReplies.join("\n\n"));
     return 0;
   } finally {
     reader?.close();

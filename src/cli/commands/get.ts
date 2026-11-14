@@ -2,6 +2,7 @@ import { resolveTarget } from "../../domain/target-resolver";
 import { resolvePaths } from "../../infra/paths";
 import { StateStore } from "../../infra/state-store";
 import { openSummariesReader } from "../../infra/summaries-reader";
+import { AgCliError } from "../../types/protocol";
 import { emitJson, emitText, resolveMode, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
 import { buildTargetRegistry, currentCallerId, observeConversation } from "./registry";
@@ -11,6 +12,9 @@ export async function runGetCommand(
   context: { env: Record<string, string | undefined>; stdout: StreamLike },
 ): Promise<number> {
   const flags = parseCommandFlags(args, { booleans: ["json"], values: [] });
+  if (flags.positionals.length > 1) {
+    throw new AgCliError("invalid_usage", "get accepts at most one target");
+  }
   const paths = resolvePaths(context.env);
   const reader = openSummariesReader(paths.summariesDbPath);
   const store = StateStore.open(paths.stateDbPath);

@@ -3,6 +3,7 @@ import { inspectDaemons } from "../../infra/daemon-discovery";
 import { resolvePaths } from "../../infra/paths";
 import { StateStore } from "../../infra/state-store";
 import { openSummariesReader } from "../../infra/summaries-reader";
+import { AgCliError } from "../../types/protocol";
 import { emitJson, emitText, resolveMode, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
 
@@ -25,6 +26,9 @@ export async function runStatusCommand(
   context: { env: Record<string, string | undefined>; stdout: StreamLike },
 ): Promise<number> {
   const flags = parseCommandFlags(args, { booleans: ["json"], values: [] });
+  if (flags.positionals.length !== 0) {
+    throw new AgCliError("invalid_usage", "status takes no positional arguments");
+  }
   const paths = resolvePaths(context.env);
 
   const candidates = await inspectDaemons(paths.antigravityDir);
@@ -41,10 +45,12 @@ export async function runStatusCommand(
           lsVersion: healthy.lsVersion,
           hubFile: healthy.hubFile,
         }),
-    problems: candidates.map(
-      (candidate) =>
-        `${candidate.hubFile}: ${candidate.parseError ?? (candidate.pidAlive ? "unreachable /healthz" : "dead pid")}`,
-    ),
+    problems: candidates
+      .filter((candidate) => !candidate.pidAlive || !candidate.healthz)
+      .map(
+        (candidate) =>
+          `${candidate.hubFile}: ${candidate.parseError ?? (candidate.pidAlive ? "unreachable /healthz" : "dead pid")}`,
+      ),
   };
 
   const reader = openSummariesReader(paths.summariesDbPath);

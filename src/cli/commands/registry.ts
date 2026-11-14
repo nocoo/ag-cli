@@ -19,6 +19,8 @@ import {
   type SummariesReader,
 } from "../../infra/summaries-reader";
 
+const INBOUND_TYPES = new Set(["USER_INPUT", "SYSTEM_MESSAGE"]);
+
 export interface ConversationObservation {
   conversationId: string;
   summary: ConversationSummaryRow | undefined;
@@ -87,6 +89,25 @@ export function buildTargetRegistry(
   };
 }
 
+export function currentTurnAwaitingArtifactFeedback(steps: TranscriptStep[]): boolean {
+  let latestInbound = -1;
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index];
+    if (step !== undefined && INBOUND_TYPES.has(step.type ?? "")) {
+      latestInbound = index;
+    }
+  }
+  if (latestInbound === -1) {
+    return false;
+  }
+  return steps.slice(latestInbound + 1).some((step) =>
+    (step?.tool_calls ?? []).some((toolCall) => {
+      const args = toolCall.arguments as { RequestFeedback?: unknown } | null | undefined;
+      return args?.RequestFeedback === true && toolCall.status !== "DONE";
+    }),
+  );
+}
+
 export function observeConversation(
   paths: ResolvedPaths,
   reader: SummariesReader | null,
@@ -97,6 +118,7 @@ export function observeConversation(
   const summary = reader?.getConversation(conversationId);
   const managed = store?.findByConversationId(conversationId) ?? undefined;
   const watermarkStep = managed?.watermarkStep ?? -1;
+  const turns = segmentTurns(steps);
   const facts: StateFacts = {
     summary:
       summary === undefined
@@ -109,16 +131,31 @@ export function observeConversation(
     terminated: managed?.terminated ?? 0,
     watermarkStep,
     steps,
+    awaitingArtifactFeedback: currentTurnAwaitingArtifactFeedback(steps),
   };
+  const status = deriveConversationStatus(facts);
+  if (
+    store !== null &&
+    managed !== undefined &&
+    turns.length > managed.lastTurn &&
+    (status === "done" || turns.length > 0)
+  ) {
+    try {
+      store.setLastTurn(conversationId, turns.length);
+      managed.lastTurn = turns.length;
+    } catch {
+      // best-effort bookkeeping: observation must never fail on a locked db
+    }
+  }
   return {
     conversationId,
     summary,
     managed,
     steps,
-    turns: segmentTurns(steps),
+    turns,
     telemetry: aggregateTelemetry(steps),
     artifacts: listBrainArtifacts(paths.brainDir, conversationId),
-    status: deriveConversationStatus(facts),
+    status,
     watermarkStep,
   };
 }

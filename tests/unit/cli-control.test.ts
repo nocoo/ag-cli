@@ -140,6 +140,10 @@ describe("run command", () => {
     await runCli(["run", "--bg", "--json", "--name", "orch", "first task"], first);
     const parentId = stdoutJson<{ conversationId: string }>(first).conversationId;
 
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    store.releaseName(parentId);
+    store.close();
+
     const second = context(false, { ...instance.env, ANTIGRAVITY_CONVERSATION_ID: parentId });
     await runCli(["run", "--bg", "--json", "child task"], second);
     const childId = stdoutJson<{ conversationId: string; parentId: string | null }>(
@@ -186,6 +190,45 @@ describe("run command", () => {
     );
     const payload = stdoutJson<{ projectId: string | null; cwd: string }>(ctx);
     expect(payload).toMatchObject({ projectId: "proj-42", cwd: "/tmp/widget" });
+  });
+
+  it("passes model and project id into the real dispatch argv and env (review F1)", async () => {
+    const cwd = join("/tmp", "r2 project");
+    const { instance } = await prepared({
+      ListProjects: {
+        projects: [{ projectId: "wanted-project", folderUri: `file://${encodeURI(cwd)}` }],
+      },
+    });
+    const ctx = context(false, instance.env);
+    await runCli(["run", "--bg", "--json", "--model", "pro", "--cwd", cwd, "build it"], ctx);
+    expect(stdoutJson<{ model: string }>(ctx).model).toBe("pro");
+    const call = readMockAgentapiCalls(instance).at(-1);
+    expect(call?.args).toEqual(expect.arrayContaining(["--model", "pro"]));
+    expect(call?.project).toBe("wanted-project");
+
+    const reuse = context(false, instance.env);
+    const runCtx2 = context(false, instance.env);
+    await runCli(["run", "--bg", "--json", "--name", "f1", "first"], runCtx2);
+    const conversationId = stdoutJson<{ conversationId: string }>(runCtx2).conversationId;
+    await runCli(
+      [
+        "run",
+        "--bg",
+        "--json",
+        "--reuse",
+        "--name",
+        "f1",
+        "--model",
+        "pro",
+        "--cwd",
+        cwd,
+        "second",
+      ],
+      reuse,
+    );
+    const reuseCall = readMockAgentapiCalls(instance).at(-1);
+    expect(reuseCall?.project).toBe("wanted-project");
+    expect(conversationId).toBeDefined();
   });
 
   it("reuses an active conversation with --reuse and advances the watermark", async () => {
@@ -429,6 +472,158 @@ describe("run command", () => {
     expect(stdoutJson<{ status: string }>(getCtx).status).toBe("done");
   });
 
+  it("a failed delivery does not clobber a concurrent successful delivery (review F2)", async () => {
+    const { instance } = await prepared();
+    const runCtx = context(false, instance.env);
+    await runCli(["run", "--bg", "--json", "--name", "race", "first"], runCtx);
+    const conversationId = stdoutJson<{ conversationId: string }>(runCtx).conversationId;
+
+    const marker = join(instance.root, "A-started");
+    writeFileSync(
+      instance.agentapiBin,
+      `#!/usr/bin/env node\nconst fs = require("node:fs");\nif (process.env.R2_MODE === "fail") {\n  fs.writeFileSync(${JSON.stringify(marker)}, "start");\n  setTimeout(() => { process.stderr.write("rejected"); process.exit(1); }, 300);\n} else {\n  process.stdout.write(JSON.stringify({ conversationId: process.argv[4], stepIndex: 2 }));\n}\n`,
+      { mode: 0o755 },
+    );
+
+    const until = async (condition: () => boolean): Promise<void> => {
+      const started = Date.now();
+      while (!condition()) {
+        if (Date.now() - started > 3000) {
+          throw new Error("marker timeout");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    };
+
+    const failingCtx = context(false, { ...instance.env, R2_MODE: "fail" });
+    const failing = runCli(["send", "race", "A"], failingCtx);
+    await until(() => existsSync(marker));
+
+    // B sends successfully against the real mock behavior encoded above.
+    const okCtx = context(false, instance.env);
+    const ok = await runCli(["send", "race", "B"], okCtx);
+    expect(ok).toBe(0);
+
+    expect(await failing).toBe(1);
+    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    const row = store?.findByConversationId(conversationId);
+    store?.close();
+    expect(row?.watermarkStep).toBe(3);
+
+    const getCtx = context(false, instance.env);
+    await runCli(["get", "race", "--json"], getCtx);
+    expect(["done", "working"]).toContain(stdoutJson<{ status: string }>(getCtx).status);
+  });
+
+  it("a failed adoption does not delete a row another delivery successfully adopted (review F2)", async () => {
+    const { instance } = await prepared();
+    const created = runAgentapi(instance, ["new-conversation", "--message", "outside"]);
+    const outsideId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
+
+    const marker = join(instance.root, "B-started");
+    writeFileSync(
+      instance.agentapiBin,
+      `#!/usr/bin/env node\nconst fs = require("node:fs");\nif (process.env.R2_MODE === "fail") {\n  fs.writeFileSync(${JSON.stringify(marker)}, "start");\n  setTimeout(() => { process.exit(1); }, 300);\n} else {\n  process.stdout.write(JSON.stringify({ conversationId: process.argv[4], stepIndex: 1 }));\n}\n`,
+      { mode: 0o755 },
+    );
+    const until = async (condition: () => boolean): Promise<void> => {
+      const started = Date.now();
+      while (!condition()) {
+        if (Date.now() - started > 3000) {
+          throw new Error("marker timeout");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    };
+
+    const failingCtx = context(false, { ...instance.env, R2_MODE: "fail" });
+    const failing = runCli(["send", outsideId, "A"], failingCtx);
+    await until(() => existsSync(marker));
+
+    const okCtx = context(false, instance.env);
+    expect(await runCli(["send", outsideId, "B"], okCtx)).toBe(0);
+    expect(
+      await runCli(["label", outsideId, "concurrent=keep"], context(false, instance.env)),
+    ).toBe(0);
+
+    expect(await failing).toBe(1);
+    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    expect(store?.findByConversationId(outsideId)).toBeDefined();
+    expect(store?.listLabels(outsideId)).toEqual([{ key: "concurrent", value: "keep" }]);
+    store?.close();
+  });
+
+  it("serializes concurrent same-name runs so only one dispatches (review F3)", async () => {
+    const { instance } = await prepared();
+    const db = initSummariesDb(instance);
+    const before = (
+      db.prepare("SELECT COUNT(*) AS n FROM conversation_summaries").get() as { n: number }
+    ).n;
+    const callsBefore = readMockAgentapiCalls(instance).length;
+
+    const slowCtx = context(false, {
+      ...instance.env,
+      AG_MOCK_AGENTAPI_DELAY_MS: "250",
+    });
+    const slow = runCli(["run", "--bg", "--json", "--name", "collision", "A"], slowCtx);
+    const slowStarted = Date.now();
+    while (readMockAgentapiCalls(instance).length <= callsBefore) {
+      if (Date.now() - slowStarted > 3000) {
+        throw new Error("first run never dispatched");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    const fastCtx = context(false, instance.env);
+    const fast = await runCli(["run", "--bg", "--json", "--name", "collision", "B"], fastCtx);
+    expect(fast).toBe(1);
+    expect(JSON.parse(stderrText(fastCtx))).toMatchObject({ error: { kind: "name_conflict" } });
+
+    expect(await slow).toBe(0);
+    const after = (
+      db.prepare("SELECT COUNT(*) AS n FROM conversation_summaries").get() as { n: number }
+    ).n;
+    expect(after - before).toBe(1);
+    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    expect(store?.listManaged().length).toBe(1);
+    store?.close();
+    db.close();
+  });
+
+  it("run --reuse on a terminated stale alias creates cleanly without dispatching twice (review F3)", async () => {
+    const { instance } = await prepared();
+    const first = context(false, instance.env);
+    await runCli(["run", "--bg", "--json", "--name", "stale", "one"], first);
+    const conversationId = stdoutJson<{ conversationId: string }>(first).conversationId;
+
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    store.markTerminated(conversationId);
+    // simulate an externally terminated row that still holds the name
+    store.rawExec(
+      "UPDATE conversations SET name = ? WHERE conversation_id = ?",
+      "stale",
+      conversationId,
+    );
+    store.close();
+
+    const db = initSummariesDb(instance);
+    const before = (
+      db.prepare("SELECT COUNT(*) AS n FROM conversation_summaries").get() as { n: number }
+    ).n;
+    const reuse = context(false, instance.env);
+    const code = await runCli(
+      ["run", "--bg", "--json", "--reuse", "--name", "stale", "two"],
+      reuse,
+    );
+    expect(code).toBe(0);
+    expect(stdoutJson<{ reused: boolean }>(reuse).reused).toBe(false);
+    const after = (
+      db.prepare("SELECT COUNT(*) AS n FROM conversation_summaries").get() as { n: number }
+    ).n;
+    expect(after - before).toBe(1);
+    db.close();
+  });
+
   it("rejects two positionals until templates ship", async () => {
     const { instance } = await prepared();
     const ctx = context(false, instance.env);
@@ -448,6 +643,66 @@ describe("run command", () => {
     expect(code).toBe(4);
     expect(JSON.parse(stderrText(ctx))).toMatchObject({ error: { kind: "daemon_unavailable" } });
   });
+
+  it("advances lastTurn for --bg runs on the next observation (review P3-31)", async () => {
+    const { instance } = await prepared();
+    const ctx = context(false, {
+      ...instance.env,
+      AG_MOCK_AGENTAPI_ASYNC: "1",
+      AG_MOCK_AGENTAPI_ASYNC_DELAY_MS: "150",
+    });
+    await runCli(["run", "--bg", "--json", "--name", "bg-turn", "task"], ctx);
+    const conversationId = stdoutJson<{ conversationId: string }>(ctx).conversationId;
+
+    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    expect(store?.findByConversationId(conversationId)?.lastTurn).toBe(0);
+    store?.close();
+
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const getCtx = context(false, instance.env);
+    await runCli(["get", "bg-turn", "--json"], getCtx);
+    const reloaded = StateStore.open(join(instance.agCliHome, "state.db"));
+    expect(reloaded?.findByConversationId(conversationId)?.lastTurn).toBe(1);
+    reloaded?.close();
+  });
+
+  it("renders tty text summaries for synchronous runs", async () => {
+    const { instance } = await prepared();
+    const ctx = context(true, instance.env);
+    const code = await runCli(["run", "--name", "tty-run", "task"], ctx);
+    expect(code).toBe(0);
+    const text = stdoutText(ctx);
+    expect(text).toContain("c1 (tty-run) · done");
+    expect(text).toContain("conversationId:");
+  });
+
+  it("renders tty timeouts with names and previews for children waits", async () => {
+    const { instance } = await prepared();
+    const parent = "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4";
+    const child = (
+      JSON.parse(
+        runAgentapi(instance, ["new-conversation", "--message", "stuck"], {
+          AG_MOCK_AGENTAPI_MODE: "stuck",
+        }).stdout,
+      ) as { conversationId: string }
+    ).conversationId;
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    store.registerConversation(child, { name: "stuck-kid", parentId: parent });
+    store.close();
+    const db = initSummariesDb(instance);
+    db.prepare(
+      "INSERT INTO conversation_summaries (conversation_id, title) VALUES (?, ?)" +
+        " ON CONFLICT(conversation_id) DO NOTHING",
+    ).run(parent, "owner");
+    db.close();
+
+    const ctx = context(true, { ...instance.env, AG_CLI_CALLER_ID: parent });
+    const code = await runCli(["wait", "--children", "any", "--timeout", "1"], ctx);
+    expect(code).toBe(124);
+    const text = stdoutText(ctx);
+    expect(text).toContain("d4d4d4d4");
+    expect(text).toContain("(timeout)");
+  }, 10_000);
 
   it("waits synchronously without --bg and reports the settled status", async () => {
     const { instance } = await prepared();
@@ -587,6 +842,12 @@ describe("send command", () => {
     const noTarget = context(false, instance.env);
     expect(await runCli(["send"], noTarget)).toBe(2);
 
+    const emptyTarget = context(false, instance.env);
+    expect(await runCli(["send", "", "m"], emptyTarget)).toBe(2);
+
+    const emptyText = context(false, instance.env);
+    expect(await runCli(["send", "c1", ""], emptyText)).toBe(2);
+
     const noText = context(false, instance.env);
     expect(await runCli(["send", "c1"], noText)).toBe(2);
 
@@ -724,6 +985,42 @@ describe("label command", () => {
     await runCli(["label", "labeled", "env="], remove);
     expect(stdoutJson<{ labels: Record<string, string> }>(remove).labels).toEqual({
       team: "gravity",
+    });
+  });
+
+  it("reports shortId as a cN string consistently with other commands (review F18)", async () => {
+    const { instance } = await prepared();
+    const runCtx = context(false, instance.env);
+    await runCli(["run", "--bg", "--json", "--name", "labeled", "task"], runCtx);
+
+    const set = context(false, instance.env);
+    await runCli(["label", "labeled", "env=prod"], set);
+    expect(stdoutJson<{ shortId: string; name: string }>(set)).toMatchObject({
+      shortId: "c1",
+      name: "labeled",
+    });
+
+    const kill = context(false, instance.env);
+    await runCli(["kill", "labeled", "--json"], kill);
+    expect(stdoutJson<{ shortId: string; terminated: boolean }>(kill)).toMatchObject({
+      shortId: "c1",
+      terminated: true,
+    });
+
+    const rm = context(false, instance.env);
+    await runCli(["rm", "c1", "--json"], rm);
+    expect(stdoutJson<{ shortId: string; removed: boolean }>(rm)).toMatchObject({
+      shortId: "c1",
+      removed: true,
+    });
+
+    const created = runAgentapi(instance, ["new-conversation", "--message", "plain"]);
+    const plainId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
+    const interrupt = context(false, instance.env);
+    await runCli(["interrupt", plainId, "--json"], interrupt);
+    expect(stdoutJson<{ shortId: string | null; interrupted: boolean }>(interrupt)).toMatchObject({
+      shortId: null,
+      interrupted: true,
     });
   });
 

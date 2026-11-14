@@ -23,7 +23,8 @@ export async function awaitSettledStatus(options: {
   const start = Date.now();
 
   return new Promise<SettleOutcome>((resolve, reject) => {
-    let finished = false;
+    let stopped = false;
+    let settled = false;
     const watcher = new TranscriptWatcher({
       antigravityDir: options.paths.antigravityDir,
       conversationId: options.conversationId,
@@ -53,35 +54,50 @@ export async function awaitSettledStatus(options: {
     };
 
     const cleanup = (): void => {
-      finished = true;
+      stopped = true;
       if (deadlineTimer !== undefined) {
         clearTimeout(deadlineTimer);
+        deadlineTimer = undefined;
       }
       watcher.close();
     };
 
+    const settle = (settleFn: () => void): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      settleFn();
+    };
+
     const finish = (timedOut: boolean): void => {
-      if (finished) {
+      if (stopped || settled) {
         return;
       }
       cleanup();
-      const fresh = observation();
-      if (fresh.status === "done" && options.store !== null) {
-        const turns = fresh.turns.length;
-        const managed = options.store.findByConversationId(options.conversationId);
-        if (managed !== undefined && turns > managed.lastTurn) {
-          options.store.setLastTurn(options.conversationId, turns);
+      try {
+        const fresh = observation();
+        if (fresh.status === "done" && options.store !== null) {
+          const turns = fresh.turns.length;
+          const managed = options.store.findByConversationId(options.conversationId);
+          if (managed !== undefined && turns > managed.lastTurn) {
+            options.store.setLastTurn(options.conversationId, turns);
+          }
         }
+        settle(() => resolve({ status: fresh.status, timedOut, durationMs: Date.now() - start }));
+      } catch (error) {
+        settle(() => reject(error));
       }
-      resolve({ status: fresh.status, timedOut, durationMs: Date.now() - start });
     };
 
     const fail = (error: unknown): void => {
-      if (finished) {
+      if (settled) {
         return;
       }
-      cleanup();
-      reject(error);
+      if (!stopped) {
+        cleanup();
+      }
+      settle(() => reject(error));
     };
 
     const guarded = (action: () => void): void => {
@@ -93,7 +109,7 @@ export async function awaitSettledStatus(options: {
     };
 
     const tick = (): void => {
-      if (!finished && SETTLED.has(status())) {
+      if (!stopped && !settled && SETTLED.has(status())) {
         finish(false);
       }
     };

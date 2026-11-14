@@ -72,12 +72,12 @@ export function parseCommandFlags(
       skipNext = false;
       continue;
     }
-    if (positionalOnly || arg === "--") {
-      if (arg === "--") {
-        positionalOnly = true;
-      } else {
-        positionals.push(arg);
-      }
+    if (positionalOnly) {
+      positionals.push(arg);
+      continue;
+    }
+    if (arg === "--") {
+      positionalOnly = true;
       continue;
     }
     if (arg.startsWith("--")) {
@@ -141,11 +141,15 @@ export async function runCli(argv: string[], context: CliContext): Promise<numbe
       return 2;
     }
     if (args.includes("--help") || args.includes("-h")) {
-      emitText(
-        context.stdout,
-        `Usage: ag-cli ${command} [options]\n\nRun ag-cli --help for the full command list.`,
-      );
-      return 0;
+      const separator = args.indexOf("--");
+      const flagArgs = separator === -1 ? args : args.slice(0, separator);
+      if (flagArgs.includes("--help") || flagArgs.includes("-h")) {
+        emitText(
+          context.stdout,
+          `Usage: ag-cli ${command} [options]\n\nRun ag-cli --help for the full command list.`,
+        );
+        return 0;
+      }
     }
     if (command === "status" || command === "doctor") {
       return await runStatusCommand(args, context);

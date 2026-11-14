@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { type CallerContext, detectCallerContext, wrapOutboundPrompt } from "../../domain/envelope";
 import { resolveTarget } from "../../domain/target-resolver";
 import { loadTemplate, type ParsedTemplate } from "../../domain/template-parser";
@@ -47,6 +48,26 @@ function callerWithContext(caller: CallerContext | null, store: StateStore): Cal
   };
 }
 
+const RESERVATION_RETRY_MS = 50;
+
+async function acquireReservation(
+  store: StateStore,
+  name: string,
+  token: string,
+  waitUpToMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + waitUpToMs;
+  for (;;) {
+    if (store.acquireNameReservation(name, token)) {
+      return true;
+    }
+    if (Date.now() >= deadline) {
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, RESERVATION_RETRY_MS));
+  }
+}
+
 export async function runRunCommand(
   args: string[],
   context: { env: Record<string, string | undefined>; stdout: StreamLike; stderr: StreamLike },
@@ -89,6 +110,8 @@ export async function runRunCommand(
   const paths = resolvePaths(context.env);
   const store = StateStore.open(paths.stateDbPath, { create: true });
   const reader = openSummariesReader(paths.summariesDbPath);
+  const reservationToken = randomUUID();
+  let reservationHeld = false;
   try {
     const caller = callerWithContext(detectCallerContext(context.env), store);
     let parentId: string | null = null;
@@ -132,6 +155,32 @@ export async function runRunCommand(
       raw: flags.flags.has("raw"),
     });
 
+    if (name !== undefined) {
+      const busyTimeout = Number(store.pragma("busy_timeout") ?? 3000);
+      if (flags.flags.has("reuse")) {
+        // release stale aliases left on terminated rows before deciding
+        for (const row of store.listManaged()) {
+          if (row.name === name && row.terminated === 1) {
+            store.releaseName(row.conversationId);
+          }
+        }
+        reservationHeld = await acquireReservation(store, name, reservationToken, busyTimeout);
+      } else {
+        const holder = store.listManaged().find((row) => row.name === name);
+        if (holder !== undefined) {
+          throw new AgCliError("name_conflict", `name ${name} is already in use`, {
+            hint: "Pick another name, use --reuse, or ag-cli rm the old conversation.",
+          });
+        }
+        if (!store.acquireNameReservation(name, reservationToken)) {
+          throw new AgCliError("name_conflict", `name ${name} is already being created`, {
+            hint: "Another run is creating this name right now; retry shortly.",
+          });
+        }
+        reservationHeld = true;
+      }
+    }
+
     if (flags.flags.has("reuse") && name !== undefined) {
       const existing = store.findActiveByName(name);
       const upstreamKilled =
@@ -140,25 +189,24 @@ export async function runRunCommand(
           : (reader?.getConversation(existing.conversationId)?.killed ?? 0) === 1;
       if (existing !== undefined && upstreamKilled) {
         store.markTerminated(existing.conversationId);
-        store.releaseName(existing.conversationId);
       }
       if (existing !== undefined && !upstreamKilled) {
         const prevMax = maxStepIndex(
           loadTranscriptSteps(paths.antigravityDir, existing.conversationId),
         );
         const watermarkStep = prevMax + 1;
-        const previousWatermark = existing.watermarkStep;
-        store.updateWatermark(existing.conversationId, watermarkStep);
-        if (labelPairs.length > 0) {
-          store.setLabels(existing.conversationId, labelPairs);
-        }
+        const ticket = store.beginDelivery(existing.conversationId, watermarkStep);
         try {
           await client.sendMessage(existing.conversationId, message, {
             title: flags.values.get("title"),
+            projectId: projectId ?? undefined,
           });
         } catch (error) {
-          store.restoreWatermark(existing.conversationId, watermarkStep, previousWatermark);
+          store.rollbackDelivery(existing.conversationId, ticket);
           throw error;
+        }
+        if (labelPairs.length > 0) {
+          store.setLabels(existing.conversationId, labelPairs);
         }
         return await finishRun({
           flags,
@@ -184,20 +232,13 @@ export async function runRunCommand(
       }
     }
 
-    if (name !== undefined && !flags.flags.has("reuse")) {
-      const holder = store.listManaged().find((row) => row.name === name);
-      if (holder !== undefined) {
-        throw new AgCliError("name_conflict", `name ${name} is already in use`, {
-          hint: "Pick another name, use --reuse, or ag-cli rm the old conversation.",
-        });
-      }
-    }
-
     const title = flags.values.get("title") ?? name ?? prompt.slice(0, 40);
     const created = await client.newConversation({
       message,
       title,
       profile: flags.values.get("profile") ?? templateDefaults?.profile,
+      model,
+      projectId: projectId ?? undefined,
     });
     const row = store.registerConversation(created.conversationId, {
       ...(name === undefined ? {} : { name }),
@@ -206,7 +247,7 @@ export async function runRunCommand(
       ...(projectId === null ? {} : { projectId }),
       model,
     });
-    store.updateWatermark(created.conversationId, 0);
+    store.beginDelivery(created.conversationId, 0);
     if (labelPairs.length > 0) {
       store.setLabels(created.conversationId, labelPairs);
     }
@@ -233,6 +274,9 @@ export async function runRunCommand(
       },
     });
   } finally {
+    if (reservationHeld && name !== undefined) {
+      store.releaseNameReservation(name, reservationToken);
+    }
     reader?.close();
     store.close();
   }

@@ -188,7 +188,7 @@ describe("turn watermark anti-race through awaitSettledStatus", () => {
     const paths = resolvePaths(instance.env);
     const store = StateStore.open(paths.stateDbPath, { create: true });
     store.registerConversation(conversationId, { name: "racy" });
-    store.updateWatermark(conversationId, 3);
+    store.beginDelivery(conversationId, 3);
 
     const reader = openSummariesReader(instance.summariesDbPath);
     const stale = await awaitSettledStatus({

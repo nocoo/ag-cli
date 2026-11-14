@@ -20,10 +20,10 @@ export async function runControlCommand(
   context: { env: Record<string, string | undefined>; stdout: StreamLike },
 ): Promise<number> {
   const flags = parseCommandFlags(args, { booleans: ["json", "purge-brain"], values: [] });
-  const target = flags.positionals[0];
-  if (target === undefined) {
-    throw new AgCliError("invalid_usage", `${verb} requires a target`);
+  if (flags.positionals.length !== 1) {
+    throw new AgCliError("invalid_usage", `${verb} requires exactly one target`);
   }
+  const target = flags.positionals[0] as string;
 
   const paths = resolvePaths(context.env);
   const store = StateStore.open(paths.stateDbPath, { create: true });
@@ -41,7 +41,12 @@ export async function runControlCommand(
         baseEnv: context.env,
       });
       await client.cancelCascadeInvocation(conversationId);
-      emitControlResult(context, flags.flags.has("json"), { conversationId, interrupted: true });
+      const shortId = store.findByConversationId(conversationId)?.shortId;
+      emitControlResult(context, flags.flags.has("json"), {
+        conversationId,
+        shortId: shortId === undefined ? null : `c${shortId}`,
+        interrupted: true,
+      });
       return 0;
     }
 
@@ -60,7 +65,7 @@ export async function runControlCommand(
       store.markTerminated(conversationId);
       emitControlResult(context, flags.flags.has("json"), {
         conversationId,
-        shortId: row.shortId,
+        shortId: `c${row.shortId}`,
         terminated: true,
       });
       return 0;
@@ -87,7 +92,7 @@ export async function runControlCommand(
     }
     emitControlResult(context, flags.flags.has("json"), {
       conversationId,
-      shortId: row.shortId,
+      shortId: `c${row.shortId}`,
       removed: true,
       purgedBrain,
     });

@@ -42,6 +42,9 @@ export async function runLsCommand(
     values: ["status"],
     repeatables: ["label"],
   });
+  if (flags.positionals.length !== 0) {
+    throw new AgCliError("invalid_usage", "ls takes no positional arguments");
+  }
   const paths = resolvePaths(context.env);
   const reader = openSummariesReader(paths.summariesDbPath);
   const store = StateStore.open(paths.stateDbPath);

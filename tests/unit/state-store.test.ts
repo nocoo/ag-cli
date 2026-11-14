@@ -250,7 +250,7 @@ describe("queries and mutations", () => {
     const id = "11111111-1111-4111-8111-111111111111";
     try {
       store?.registerConversation(id, {});
-      store?.updateWatermark(id, 6);
+      store?.beginDelivery(id, 6);
       store?.advanceTurn(id);
       store?.advanceTurn(id);
       store?.markTerminated(id);

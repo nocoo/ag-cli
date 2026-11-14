@@ -229,38 +229,13 @@ describe("schema command", () => {
     const ctx = context(true, instance.env);
     const code = await runCli(["schema"], ctx);
     expect(code).toBe(0);
-    const schema = stdoutJson<{
-      $schema: string;
-      title: string;
-      properties: {
-        exitCodes: { properties: Record<string, { const: number }> };
-        reasons: { items: { enum: string[] } };
-        types: { properties: Record<string, { required?: string[] }> };
-        commands: {
-          properties: Record<
-            string,
-            {
-              properties: {
-                options: { properties: Record<string, unknown> };
-                output: { $ref: string };
-              };
-              required: string[];
-            }
-          >;
-        };
-      };
-    }>(ctx);
-    expect(schema.title).toBe("ag-cli");
+    const schema = stdoutJson<Record<string, unknown>>(ctx);
     expect(schema.$schema).toContain("json-schema");
-    expect(schema.properties.exitCodes.properties.timeout?.const).toBe(124);
-    expect(schema.properties.reasons.items.enum).toEqual([
-      "done",
-      "blocked",
-      "error",
-      "message",
-      "timeout",
-    ]);
-    const commands = schema.properties.commands.properties;
+    const defs = (schema as { $defs: Record<string, unknown> }).$defs;
+    expect(defs).toBeDefined();
+    const commands = (
+      schema as { properties: { commands: { properties: Record<string, unknown> } } }
+    ).properties.commands.properties;
     for (const expected of [
       "run",
       "send",
@@ -275,15 +250,124 @@ describe("schema command", () => {
       "templates",
       "events",
       "status",
-      "schema",
     ]) {
       expect(commands[expected]).toBeDefined();
     }
-    expect(Object.keys(commands.run?.properties.options.properties ?? {})).toContain("--bg");
     for (const name of Object.keys(commands)) {
-      const ref = (commands[name]?.properties.output.$ref ?? "").replace("#/types/", "");
-      expect(schema.properties.types.properties[ref]).toBeDefined();
+      const ref = (commands[name] as { properties: { output: { $ref: string } } }).properties.output
+        .$ref;
+      expect(ref.startsWith("#/$defs/")).toBe(true);
+      expect(defs[ref.slice("#/$defs/".length)]).toBeDefined();
     }
+    const runOptions = (
+      commands.run as {
+        properties: { options: { properties: Record<string, Record<string, unknown>> } };
+      }
+    ).properties.options.properties;
+    expect(runOptions["--timeout"]).toMatchObject({ type: "integer", default: 180 });
+    expect(runOptions["--timeout"]?.const).toBeUndefined();
+  });
+
+  it("validates real command outputs against the schema (review F18)", async () => {
+    const instance = await prepared();
+    const schemaCtx = context(true, instance.env);
+    await runCli(["schema"], schemaCtx);
+    const schema = stdoutJson<Record<string, unknown>>(schemaCtx);
+
+    const errors: string[] = [];
+    const resolveRef = (ref: string): Record<string, unknown> => {
+      if (!ref.startsWith("#/")) {
+        throw new Error(`external ref ${ref}`);
+      }
+      let node: unknown = schema;
+      for (const part of ref.slice(2).split("/")) {
+        node = (node as Record<string, unknown>)?.[part];
+      }
+      if (node === undefined) {
+        throw new Error(`unresolvable ref ${ref}`);
+      }
+      return node as Record<string, unknown>;
+    };
+    const typeOf = (value: unknown): string => {
+      if (value === null) return "null";
+      if (Array.isArray(value)) return "array";
+      if (typeof value === "number") return Number.isInteger(value) ? "integer" : "number";
+      return typeof value;
+    };
+    const validate = (node: unknown, value: unknown, path: string): void => {
+      if (node === undefined || node === null) return;
+      const spec = node as Record<string, unknown>;
+      if (typeof spec.$ref === "string") {
+        validate(resolveRef(spec.$ref), value, path);
+        return;
+      }
+      if (spec.type !== undefined) {
+        const allowed = Array.isArray(spec.type) ? spec.type : [spec.type];
+        const actual = typeOf(value);
+        if (!allowed.includes(actual) && !(actual === "integer" && allowed.includes("number"))) {
+          errors.push(`${path}: expected type ${allowed.join("|")}, got ${actual}`);
+          return;
+        }
+      }
+      if (spec.enum !== undefined && !(spec.enum as unknown[]).includes(value)) {
+        errors.push(`${path}: ${JSON.stringify(value)} not in enum`);
+      }
+      if (spec.const !== undefined && spec.const !== value) {
+        errors.push(`${path}: expected const ${JSON.stringify(spec.const)}`);
+      }
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        const properties = (spec.properties ?? {}) as Record<string, unknown>;
+        for (const key of (spec.required as string[] | undefined) ?? []) {
+          if (!(key in value)) {
+            errors.push(`${path}: missing required property ${key}`);
+          }
+        }
+        if (spec.additionalProperties === false) {
+          for (const key of Object.keys(value)) {
+            if (!(key in properties)) {
+              errors.push(`${path}: unexpected property ${key}`);
+            }
+          }
+        }
+        for (const [key, child] of Object.entries(properties)) {
+          if (key in value) {
+            validate(child, (value as Record<string, unknown>)[key], `${path}.${key}`);
+          }
+        }
+      }
+      if (Array.isArray(value) && spec.items !== undefined) {
+        for (const [index, entry] of value.entries()) {
+          validate(spec.items, entry, `${path}[${index}]`);
+        }
+      }
+    };
+
+    const outputRef = async (command: string[], def: string): Promise<void> => {
+      const ctx = context(false, instance.env);
+      const code = await runCli(command, ctx);
+      expect(code, `command ${command.join(" ")} failed: ${stderrText(ctx)}`).toBeLessThan(124);
+      if (code !== 0) return;
+      validate({ $ref: `#/$defs/${def}` }, stdoutJson(ctx), def);
+    };
+
+    const runCtx = context(false, instance.env);
+    await runCli(["run", "--bg", "--json", "--name", "schema-run", "task"], runCtx);
+    validate({ $ref: "#/$defs/runSummary" }, stdoutJson(runCtx), "runSummary");
+    const conversationId = stdoutJson<{ conversationId: string }>(runCtx).conversationId;
+
+    await outputRef(["send", "--json", "schema-run", "second"], "receipt");
+    await outputRef(["wait", "--json", "schema-run"], "waitResult");
+    await outputRef(["read", "--json", "--steps", "schema-run"], "readResult");
+    await outputRef(["get", "--json", "schema-run"], "getSnapshot");
+    await outputRef(["ls", "--json"], "lsOutput");
+    await outputRef(["label", "--json", "schema-run", "k=v"], "labelResult");
+    await outputRef(["templates", "--json"], "templatesOutput");
+    await outputRef(["status", "--json"], "statusReport");
+    await outputRef(["kill", "--json", "schema-run"], "controlResult");
+    await outputRef(["interrupt", "--json", conversationId], "controlResult");
+    await outputRef(["rm", "--json", "schema-run"], "controlResult");
+
+    expect(errors).toEqual([]);
   });
 });
 

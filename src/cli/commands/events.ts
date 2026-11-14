@@ -48,6 +48,9 @@ export async function runEventsCommand(
     values: ["target", "children-of", "heartbeat-ms", "discovery-ms"],
     repeatables: ["label"],
   });
+  if (flags.positionals.length !== 0) {
+    throw new AgCliError("invalid_usage", "events takes no positional arguments");
+  }
   const labelFilters = flags.repeatable.get("label") ?? [];
   for (const pair of labelFilters) {
     if (pair.indexOf("=") < 1) {
@@ -67,8 +70,8 @@ export async function runEventsCommand(
   }
 
   const paths = resolvePaths(context.env);
-  const reader = openSummariesReader(paths.summariesDbPath);
-  const store = StateStore.open(paths.stateDbPath);
+  let reader = openSummariesReader(paths.summariesDbPath);
+  let store = StateStore.open(paths.stateDbPath);
   try {
     const callerId = currentCallerId(context.env);
     const filterTarget = flags.values.get("target") ?? flags.values.get("children-of");
@@ -78,7 +81,17 @@ export async function runEventsCommand(
         ? undefined
         : resolveFilterOwner(filterTarget, paths, reader, store, callerId);
 
+    const reopenDatabases = (): void => {
+      if (reader === null) {
+        reader = openSummariesReader(paths.summariesDbPath);
+      }
+      if (store === null) {
+        store = StateStore.open(paths.stateDbPath);
+      }
+    };
+
     const discover = (): string[] => {
+      reopenDatabases();
       const managed = store?.listManaged({ activeOnly: true }) ?? [];
       const ids: string[] = [];
       if (owner !== undefined) {
@@ -116,11 +129,11 @@ export async function runEventsCommand(
         : unique;
     };
 
-    const tty = context.stdout.isTTY === true;
+    const tty = context.stdout.isTTY === true && !flags.flags.has("json");
     const tracked = new Map<string, TrackedConversation>();
     const watchers = new Map<string, TranscriptWatcher>();
-    let heartbeatTimer: ReturnType<typeof setInterval> = setInterval(() => {}, 1 << 30);
-    let discoveryTimer: ReturnType<typeof setInterval> = setInterval(() => {}, 1 << 30);
+    let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+    let discoveryTimer: ReturnType<typeof setInterval> | undefined;
     let resolveRun: ((code: number) => void) | undefined;
     let rejectRun: ((error: unknown) => void) | undefined;
 
@@ -133,8 +146,14 @@ export async function runEventsCommand(
     };
 
     const cleanup = (): void => {
-      clearInterval(heartbeatTimer);
-      clearInterval(discoveryTimer);
+      if (heartbeatTimer !== undefined) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = undefined;
+      }
+      if (discoveryTimer !== undefined) {
+        clearInterval(discoveryTimer);
+        discoveryTimer = undefined;
+      }
       for (const watch of watchers.values()) {
         watch.close();
       }
@@ -337,7 +356,6 @@ function resolveFilterOwner(
   }
   return resolveTarget(trimmed, buildTargetRegistry(paths, reader, store), { callerId });
 }
-
 function matchesLabels(
   store: StateStore | null,
   conversationId: string,

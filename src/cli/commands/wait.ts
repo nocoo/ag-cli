@@ -28,6 +28,9 @@ export async function runWaitCommand(
   context: { env: Record<string, string | undefined>; stdout: StreamLike; stderr: StreamLike },
 ): Promise<number> {
   const flags = parseCommandFlags(args, { booleans: ["json"], values: ["children", "timeout"] });
+  if (flags.positionals.length > 1) {
+    throw new AgCliError("invalid_usage", "wait accepts at most one target");
+  }
   const childrenMode = flags.values.get("children");
   if (childrenMode !== undefined && !CHILDREN_MODES.has(childrenMode)) {
     throw new AgCliError("invalid_usage", `--children expects any or all, got ${childrenMode}`);
@@ -153,18 +156,20 @@ function findChildren(
   ownerId: string,
 ): ChildCandidate[] {
   const children: ChildCandidate[] = [];
-  const seen = new Set<string>();
+  const allManaged = store?.listManaged() ?? [];
+  const managedIds = new Set(allManaged.map((row) => row.conversationId));
+  const added = new Set<string>();
   const killed = new Set(
     (reader?.listConversations() ?? [])
       .filter((row) => row.killed === 1)
       .map((row) => row.conversation_id),
   );
-  for (const row of store?.listManaged() ?? []) {
+  for (const row of allManaged) {
     if (row.terminated === 1 || killed.has(row.conversationId)) {
       continue;
     }
-    if (row.parentId === ownerId && !seen.has(row.conversationId)) {
-      seen.add(row.conversationId);
+    if (row.parentId === ownerId && !added.has(row.conversationId)) {
+      added.add(row.conversationId);
       children.push({ conversationId: row.conversationId });
     }
   }
@@ -172,8 +177,11 @@ function findChildren(
     if (row.killed === 1) {
       continue;
     }
-    if (row.parent_conversation_id === ownerId && !seen.has(row.conversation_id)) {
-      seen.add(row.conversation_id);
+    if (managedIds.has(row.conversation_id)) {
+      continue;
+    }
+    if (row.parent_conversation_id === ownerId && !added.has(row.conversation_id)) {
+      added.add(row.conversation_id);
       children.push({ conversationId: row.conversation_id, summary: row });
     }
   }
@@ -212,67 +220,107 @@ async function waitForChildren(options: {
   );
   const children = findChildren(options.reader, options.store, options.ownerId);
 
-  const summarize = (): WaitResult => {
-    const observed = children.map((child) => {
-      const observation = observeConversation(
-        options.paths,
-        options.reader,
-        child.conversationId,
-        options.store,
-      );
+  const watchers = new Map<string, TranscriptWatcher>();
+  const trackedIds = [options.ownerId, ...children.map((child) => child.conversationId)];
+  for (const conversationId of trackedIds) {
+    const watcher = new TranscriptWatcher({
+      antigravityDir: options.paths.antigravityDir,
+      conversationId,
+      summariesDbPath: options.paths.summariesDbPath,
+      stateDbPath: options.paths.stateDbPath,
+      debounceMs: 20,
+      fallbackMs: 500,
+      onChange: () => {
+        guarded(tick);
+      },
+    });
+    watcher.start();
+    watcher.readNewSteps();
+    watchers.set(conversationId, watcher);
+  }
+
+  const observe = (conversationId: string) =>
+    observeConversation(
+      options.paths,
+      options.reader,
+      conversationId,
+      options.store,
+      watchers.get(conversationId)?.currentSteps(),
+    );
+
+  const childSummaries = () =>
+    children.map((child) => {
+      const observation = observe(child.conversationId);
       return {
-        conversationId: child.conversationId,
-        shortId:
-          observation.managed === undefined || observation.managed === null
-            ? null
-            : `c${observation.managed.shortId}`,
-        name: observation.managed?.name ?? null,
-        status: observation.status as string,
+        observation,
+        entry: {
+          conversationId: child.conversationId,
+          shortId:
+            observation.managed === undefined || observation.managed === null
+              ? null
+              : `c${observation.managed.shortId}`,
+          name: observation.managed?.name ?? null,
+          status: observation.status as string,
+        },
       };
     });
+
+  const summarize = (): WaitResult => {
+    const observed = childSummaries();
     let decided: WaitResult["target"];
     if (options.mode === "any") {
-      const settled = observed.find((child) => SETTLED.has(child.status as ConversationStatus));
+      const settled = observed.find((child) => SETTLED.has(child.observation.status));
       decided =
         settled === undefined
           ? toTargetSummary(options.ownerId, undefined, undefined, "working", 0, 0)
           : {
-              ...settled,
-              turn: 0,
-              stepCount: 0,
+              ...settled.entry,
+              turn: settled.observation.turns.length,
+              stepCount: settled.observation.telemetry.stepCount,
             };
-    } else {
-      const priority =
-        observed.find((child) => child.status === "error") ??
-        observed.find((child) => child.status === "blocked") ??
-        observed[observed.length - 1];
-      decided =
-        priority === undefined
-          ? toTargetSummary(options.ownerId, undefined, undefined, "done", 0, 0)
-          : { ...priority, turn: 0, stepCount: 0 };
+      const preview =
+        settled === undefined ? "" : (latestReply(settled.observation.steps)?.content ?? "");
+      return {
+        reason: "timeout",
+        timedOut: true,
+        durationMs: Date.now() - start,
+        target: decided,
+        latestReplyPreview: preview,
+        children: observed.map((child) => child.entry),
+      };
     }
+    const priority =
+      observed.find((child) => child.observation.status === "error") ??
+      observed.find((child) => child.observation.status === "blocked") ??
+      observed[observed.length - 1];
+    decided =
+      priority === undefined
+        ? toTargetSummary(options.ownerId, undefined, undefined, "done", 0, 0)
+        : {
+            ...priority.entry,
+            turn: priority.observation.turns.length,
+            stepCount: priority.observation.telemetry.stepCount,
+          };
+    const preview =
+      priority === undefined ? "" : (latestReply(priority.observation.steps)?.content ?? "");
     return {
       reason: "timeout",
       timedOut: true,
       durationMs: Date.now() - start,
       target: decided,
-      latestReplyPreview: "",
-      children: observed,
+      latestReplyPreview: preview,
+      children: observed.map((child) => child.entry),
     };
   };
 
   const evaluate = (): { done: boolean; reason?: string; childId?: string } => {
     if (options.mode === "any") {
-      const settled = children.find((child) =>
-        SETTLED.has(
-          observeConversation(options.paths, options.reader, child.conversationId, options.store)
-            .status,
-        ),
-      );
-      if (settled !== undefined) {
-        return { done: true, reason: "settled", childId: settled.conversationId };
+      for (const child of children) {
+        if (SETTLED.has(observe(child.conversationId).status)) {
+          return { done: true, reason: "settled", childId: child.conversationId };
+        }
       }
-      const callerSteps = loadTranscriptSteps(options.paths.antigravityDir, options.ownerId);
+      const callerSteps = (watchers.get(options.ownerId) as TranscriptWatcher).currentSteps();
       const newInbound = callerSteps.some(
         (step) =>
           step.step_index > callerBaseline &&
@@ -283,72 +331,90 @@ async function waitForChildren(options: {
       }
       return { done: false };
     }
-    const allIdle = children.every(
-      (child) =>
-        observeConversation(options.paths, options.reader, child.conversationId, options.store)
-          .status !== "working",
-    );
+    const allIdle = children.every((child) => observe(child.conversationId).status !== "working");
     return allIdle ? { done: true, reason: "settled" } : { done: false };
   };
 
-  return new Promise<WaitResult>((resolve) => {
-    const watchers: TranscriptWatcher[] = [];
-    const trackedIds = [options.ownerId, ...children.map((child) => child.conversationId)];
-    for (const conversationId of trackedIds) {
-      const watcher = new TranscriptWatcher({
-        antigravityDir: options.paths.antigravityDir,
-        conversationId,
-        summariesDbPath: options.paths.summariesDbPath,
-        debounceMs: 20,
-        fallbackMs: 500,
-        onChange: () => {
-          tick();
-        },
-      });
-      watcher.start();
-      watchers.push(watcher);
+  let settled = false;
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  const cleanup = (): void => {
+    if (deadlineTimer !== undefined) {
+      clearTimeout(deadlineTimer);
+      deadlineTimer = undefined;
     }
+    for (const watcher of watchers.values()) {
+      watcher.close();
+    }
+    watchers.clear();
+  };
+  const finish = (result: WaitResult): void => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    cleanup();
+    resolvePromise(result);
+  };
+  const fail = (error: unknown): void => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    cleanup();
+    rejectPromise(error);
+  };
+  const guarded = (action: () => void): void => {
+    try {
+      action();
+    } catch (error) {
+      fail(error);
+    }
+  };
 
-    const finish = (result: WaitResult): void => {
-      if (deadlineTimer !== undefined) {
-        clearTimeout(deadlineTimer);
-      }
-      for (const watcher of watchers) {
-        watcher.close();
-      }
-      resolve(result);
-    };
-
-    const tick = (): void => {
-      const outcome = evaluate();
-      if (!outcome.done) {
-        return;
-      }
-      const summary = summarize();
-      if (outcome.reason === "message") {
-        finish({ ...summary, reason: "message", timedOut: false });
-        return;
-      }
-      const decidedId = outcome.childId;
-      const decidedChild =
-        decidedId === undefined
-          ? summary.target
-          : summary.children.find((child) => child.conversationId === decidedId);
-      const rawStatus = decidedChild?.status ?? "done";
-      const status = rawStatus === "idle" ? "done" : rawStatus;
-      const target =
-        decidedChild === undefined ? summary.target : { ...summary.target, ...decidedChild };
-      finish({ ...summary, reason: status, timedOut: false, target });
-    };
-
-    const deadlineTimer =
-      options.timeoutSec > 0
-        ? setTimeout(() => {
-            finish(summarize());
-          }, options.timeoutSec * 1000)
-        : undefined;
-    tick();
+  let resolvePromise: (result: WaitResult) => void = () => {};
+  let rejectPromise: (error: unknown) => void = () => {};
+  const promise = new Promise<WaitResult>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
   });
+
+  const tick = (): void => {
+    for (const watcher of watchers.values()) {
+      watcher.readNewSteps();
+    }
+    const outcome = evaluate();
+    if (!outcome.done) {
+      return;
+    }
+    const summary = summarize();
+    if (outcome.reason === "message") {
+      finish({ ...summary, reason: "message", timedOut: false });
+      return;
+    }
+    const decidedId = outcome.childId;
+    const decidedChild =
+      decidedId === undefined
+        ? summary.children.find((child) => child.conversationId === summary.target.conversationId)
+        : summary.children.find((child) => child.conversationId === decidedId);
+    const rawStatus = decidedChild?.status ?? summary.target.status;
+    const status = rawStatus === "idle" ? "done" : rawStatus;
+    const target =
+      decidedChild === undefined ? summary.target : { ...summary.target, ...decidedChild };
+    finish({ ...summary, reason: status, timedOut: false, target });
+  };
+
+  if (options.timeoutSec > 0) {
+    deadlineTimer = setTimeout(() => {
+      guarded(() => {
+        tick();
+        if (!settled) {
+          finish(summarize());
+        }
+      });
+    }, options.timeoutSec * 1000);
+  }
+  guarded(tick);
+  return promise;
 }
 
 function emitWaitResult(

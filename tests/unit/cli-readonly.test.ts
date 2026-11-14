@@ -1,4 +1,4 @@
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { collectBrainIds, observeConversation } from "../../src/cli/commands/registry";
@@ -248,7 +248,7 @@ describe("state-backed conversations", () => {
       parentId: "19191919-1919-4191-8191-191919191919",
     });
     store.setLabels(conversationId, ["env=prod"]);
-    store.updateWatermark(conversationId, 0);
+    store.beginDelivery(conversationId, 0);
     store.close();
 
     const getCtx = context(false, instance.env);
@@ -425,6 +425,72 @@ describe("strict parsing", () => {
     expect(await runCli(["wait", "-h"], help)).toBe(0);
   });
 
+  it("keeps every argument after the first -- as a literal positional (review F15)", () => {
+    const parsed = parseCommandFlags(["--", "--"], { booleans: [], values: [] });
+    expect(parsed.positionals).toEqual(["--"]);
+    const parsed2 = parseCommandFlags(["--", "--help", "x"], { booleans: [], values: [] });
+    expect(parsed2.positionals).toEqual(["--help", "x"]);
+    const parsed3 = parseCommandFlags(["a", "--", "--json"], { booleans: ["json"], values: [] });
+    expect(parsed3.positionals).toEqual(["a", "--json"]);
+    expect(parsed3.flags.size).toBe(0);
+  });
+
+  it("only triggers help interception before the -- separator (review F15)", async () => {
+    const instance = sandbox();
+    initSummariesDb(instance);
+    writeMockAgentapi(instance);
+    const server = await startMockLanguageServer();
+    openServers.push(server);
+    writeHubFile(instance, {
+      pid: process.pid,
+      httpPort: server.port,
+      httpsPort: server.port,
+      lsVersion: "1.0.0",
+      csrfToken: server.csrfToken,
+    });
+
+    const ctx = context(false, instance.env);
+    const code = await runCli(["run", "--bg", "--json", "--", "--help"], ctx);
+    expect(code).toBe(0);
+    const payload = stdoutJson<{ conversationId: string }>(ctx);
+    expect(payload.conversationId).toBeDefined();
+    const transcript = readFileSync(
+      join(
+        instance.brainDir,
+        payload.conversationId,
+        ".system_generated",
+        "logs",
+        "transcript.jsonl",
+      ),
+      "utf8",
+    );
+    expect(transcript).toContain("--help");
+  });
+
+  it("enforces exact positional arities on every command (review F15)", async () => {
+    const instance = sandbox();
+    const twoTargets = context(false, instance.env);
+    expect(await runCli(["get", "second", "unused-target"], twoTargets)).toBe(2);
+    expect(JSON.parse(stderrText(twoTargets))).toMatchObject({ error: { kind: "invalid_usage" } });
+
+    const readExtra = context(false, instance.env);
+    expect(await runCli(["read", "a", "b"], readExtra)).toBe(2);
+    const waitExtra = context(false, instance.env);
+    expect(await runCli(["wait", "a", "b"], waitExtra)).toBe(2);
+    const sendExtra = context(false, instance.env);
+    expect(await runCli(["send", "a", "b", "c"], sendExtra)).toBe(2);
+    const killExtra = context(false, instance.env);
+    expect(await runCli(["kill", "a", "b"], killExtra)).toBe(2);
+    const lsExtra = context(false, instance.env);
+    expect(await runCli(["ls", "stray"], lsExtra)).toBe(2);
+    const statusExtra = context(false, instance.env);
+    expect(await runCli(["status", "stray"], statusExtra)).toBe(2);
+    const eventsExtra = context(false, instance.env);
+    expect(await runCli(["events", "stray"], eventsExtra)).toBe(2);
+    const templatesExtra = context(false, instance.env);
+    expect(await runCli(["templates", "stray"], templatesExtra)).toBe(2);
+  });
+
   it("rejects option-like values and invalid ls statuses", async () => {
     const instance = sandbox();
     const optionLike = context(false, instance.env);
@@ -483,13 +549,14 @@ describe("status command", () => {
     const code = await runCli(["status", "--json"], ctx);
     expect(code).toBe(0);
     const payload = stdoutJson<{
-      daemon: { healthy: boolean; pid: number; httpPort: number };
+      daemon: { healthy: boolean; pid: number; httpPort: number; problems: string[] };
       summaries: { readable: boolean; conversations: number };
       agentapi: { present: boolean; executable: boolean };
       stateDb: { present: boolean };
     }>(ctx);
     expect(payload.daemon.healthy).toBe(true);
     expect(payload.daemon.pid).toBe(process.pid);
+    expect(payload.daemon.problems).toEqual([]);
     expect(payload.summaries).toEqual({ readable: true, conversations: 1 });
     expect(payload.agentapi.present).toBe(true);
     expect(payload.agentapi.executable).toBe(true);
@@ -971,6 +1038,21 @@ describe("read command", () => {
     expect(await runCli(["read", conversationId, "--artifact", "escape.txt"], linked)).toBe(2);
   });
 
+  it("rejects artifact reads when the conversation dir itself escapes the brain root (review F9)", async () => {
+    const instance = sandbox();
+    const conversationId = await prepareConversation(instance);
+    const outside = join(instance.root, "outside-brain");
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, "secret.txt"), "SYNTHETIC-OUTSIDE");
+    rmSync(join(instance.brainDir, conversationId), { recursive: true, force: true });
+    symlinkSync(outside, join(instance.brainDir, conversationId));
+
+    const ctx = context(false, instance.env);
+    const code = await runCli(["read", conversationId, "--artifact", "secret.txt"], ctx);
+    expect(code).toBe(2);
+    expect(JSON.parse(stderrText(ctx))).toMatchObject({ error: { kind: "invalid_usage" } });
+  });
+
   it("lists artifacts in the json payload", async () => {
     const instance = sandbox();
     const conversationId = await prepareConversation(instance);
@@ -1015,7 +1097,7 @@ describe("read command", () => {
       { step_index: 4, type: "PLANNER_RESPONSE", status: "DONE", content: "final" },
       { step_index: 6, type: "SYSTEM_MESSAGE", status: "DONE" },
       { step_index: 7, status: "DONE", content: "typeless body" },
-      { step_index: 8, type: "GENERIC", status: "DONE" },
+      { step_index: 8, type: "GENERIC", status: "DONE", thinking: "" },
     ];
     writeFileSync(
       join(logs, "transcript.jsonl"),
@@ -1081,9 +1163,100 @@ describe("read command", () => {
     const ctx = context(false, instance.env);
     await runCli(["read", conversationId, "--json"], ctx);
     const payload = stdoutJson<{ turn: number; turns: Array<{ reply: string }> }>(ctx);
-    expect(payload.turn).toBe(1);
+    expect(payload.turn).toBe(2);
     expect(payload.turns).toHaveLength(1);
     expect(payload.turns[0]?.reply).toBe("Mock reply for: turn two");
+  });
+
+  it("reports total turns while selecting recent ones (review F16)", async () => {
+    const instance = sandbox();
+    const conversationId = await prepareConversation(instance, "turn one");
+    runAgentapi(instance, [
+      "send-message",
+      "--conversation-id",
+      conversationId,
+      "--message",
+      "turn two",
+    ]);
+
+    const ctx = context(false, instance.env);
+    await runCli(["read", conversationId, "--json", "--turns", "2"], ctx);
+    const payload = stdoutJson<{
+      turn: number;
+      turns: Array<{ turn: number; reply: string }>;
+    }>(ctx);
+    expect(payload.turn).toBe(2);
+    expect(payload.turns).toHaveLength(2);
+    expect(payload.turns[0]?.reply).toBe("Mock reply for: turn one");
+    expect(payload.turns[1]?.reply).toBe("Mock reply for: turn two");
+  });
+
+  it("merges full transcripts before segmenting turns so replies are untruncated (review F16)", async () => {
+    const instance = sandbox();
+    const conversationId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const db = initSummariesDb(instance);
+    db.prepare("INSERT INTO conversation_summaries (conversation_id, title) VALUES (?, ?)").run(
+      conversationId,
+      "two turns",
+    );
+    db.close();
+    const logs = join(instance.brainDir, conversationId, ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    const turnOne = [
+      { step_index: 0, type: "USER_INPUT", status: "DONE", content: "first" },
+      {
+        step_index: 1,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "TRUNC1",
+        truncated_fields: ["content"],
+      },
+    ];
+    const turnTwo = [
+      { step_index: 2, type: "USER_INPUT", status: "DONE", content: "second" },
+      {
+        step_index: 3,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "TRUNC2",
+        truncated_fields: ["content"],
+      },
+    ];
+    writeFileSync(
+      join(logs, "transcript.jsonl"),
+      `${[...turnOne, ...turnTwo].map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+    );
+    writeFileSync(
+      join(logs, "transcript_full.jsonl"),
+      `${[...turnOne, ...turnTwo]
+        .map((entry, index) =>
+          JSON.stringify({
+            ...entry,
+            content:
+              entry.content === "TRUNC1" || entry.content === "TRUNC2"
+                ? `FULL${index}`
+                : entry.content,
+          }),
+        )
+        .join("\n")}\n`,
+    );
+
+    const jsonCtx = context(false, instance.env);
+    await runCli(["read", conversationId, "--json", "--full", "--turns", "2"], jsonCtx);
+    const payload = stdoutJson<{
+      turn: number;
+      reply: string;
+      turns: Array<{ turn: number; reply: string }>;
+    }>(jsonCtx);
+    expect(payload.turn).toBe(2);
+    expect(payload.reply).toBe("FULL3");
+    expect(payload.turns.map((turn) => turn.reply)).toEqual(["FULL1", "FULL3"]);
+
+    const textCtx = context(false, instance.env);
+    await runCli(["read", conversationId, "--full", "--turns", "2"], textCtx);
+    const text = stdoutText(textCtx);
+    expect(text).toContain("FULL1");
+    expect(text).toContain("FULL3");
   });
 
   it("answers json errors on stderr when tty reads fail", async () => {

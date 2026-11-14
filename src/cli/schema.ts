@@ -1,16 +1,17 @@
 interface JsonSchema {
-  type?: string;
+  type?: string | string[];
   properties?: Record<string, JsonSchema>;
   items?: JsonSchema;
   required?: string[];
   enum?: string[];
-  const?: string;
+  const?: string | number;
+  default?: string | number | boolean;
   $ref?: string;
   additionalProperties?: boolean;
   description?: string;
 }
 
-const nullableString: JsonSchema = { type: ["string", "null"] as unknown as string };
+const nullableString: JsonSchema = { type: ["string", "null"] };
 
 function objectSchema(properties: Record<string, JsonSchema>, required?: string[]): JsonSchema {
   return {
@@ -21,7 +22,11 @@ function objectSchema(properties: Record<string, JsonSchema>, required?: string[
   };
 }
 
-const TYPES = {
+const conversationStatus: JsonSchema = {
+  enum: ["idle", "working", "done", "blocked", "error"],
+};
+
+const $DEFS = {
   runSummary: objectSchema(
     {
       shortId: nullableString,
@@ -34,7 +39,7 @@ const TYPES = {
       cwd: { type: "string" },
       parentId: nullableString,
       watermarkStep: { type: "integer" },
-      status: { enum: ["idle", "working", "done", "blocked", "error"] },
+      status: conversationStatus,
     },
     ["conversationId", "reused", "watermarkStep", "status"],
   ),
@@ -90,7 +95,7 @@ const TYPES = {
       shortId: nullableString,
       name: nullableString,
       title: nullableString,
-      status: { enum: ["idle", "working", "done", "blocked", "error"] },
+      status: conversationStatus,
       turn: { type: "integer" },
       stepCount: { type: "integer" },
       watermarkStep: { type: "integer" },
@@ -129,7 +134,7 @@ const TYPES = {
       name: nullableString,
       parentId: nullableString,
       labels: { type: "object" },
-      status: { enum: ["idle", "working", "done", "blocked", "error"] },
+      status: conversationStatus,
       turn: { type: "integer" },
       reply: { type: "string" },
       turns: {
@@ -143,17 +148,44 @@ const TYPES = {
           ["turn", "inboundType", "reply"],
         ),
       },
-      artifacts: { type: "array", items: { type: "object" } },
-      telemetry: { type: "object" },
+      steps: {
+        type: "array",
+        items: { type: "object" },
+      },
+      artifacts: {
+        type: "array",
+        items: objectSchema(
+          {
+            name: { type: "string" },
+            path: { type: "string" },
+            bytes: { type: "integer" },
+            modifiedAt: { type: "string" },
+          },
+          ["name", "path"],
+        ),
+      },
+      telemetry: objectSchema(
+        {
+          inputTokens: { type: "integer" },
+          cacheReadTokens: { type: "integer" },
+          outputTokens: { type: "integer" },
+          stepCount: { type: "integer" },
+        },
+        ["inputTokens", "cacheReadTokens", "outputTokens", "stepCount"],
+      ),
     },
     ["conversationId", "status", "turn", "reply", "turns", "artifacts", "telemetry"],
   ),
+  lsOutput: {
+    type: "array",
+    items: { $ref: "#/$defs/lsRow" },
+  },
   lsRow: objectSchema(
     {
       shortId: nullableString,
       name: nullableString,
       conversationId: { type: "string" },
-      status: { enum: ["idle", "working", "done", "blocked", "error"] },
+      status: conversationStatus,
       turn: { type: "integer" },
       stepCount: { type: "integer" },
       title: { type: "string" },
@@ -164,6 +196,10 @@ const TYPES = {
     },
     ["conversationId", "status", "turn", "stepCount", "labels"],
   ),
+  templatesOutput: {
+    type: "array",
+    items: { $ref: "#/$defs/templateRow" },
+  },
   templateRow: objectSchema(
     {
       name: { type: "string" },
@@ -173,6 +209,26 @@ const TYPES = {
       cwd: { type: "string" },
     },
     ["name"],
+  ),
+  labelResult: objectSchema(
+    {
+      conversationId: { type: "string" },
+      shortId: nullableString,
+      name: nullableString,
+      labels: { type: "object" },
+    },
+    ["conversationId", "shortId", "labels"],
+  ),
+  controlResult: objectSchema(
+    {
+      conversationId: { type: "string" },
+      shortId: nullableString,
+      interrupted: { type: "boolean" },
+      terminated: { type: "boolean" },
+      removed: { type: "boolean" },
+      purgedBrain: { type: "boolean" },
+    },
+    ["conversationId"],
   ),
   statusReport: objectSchema(
     {
@@ -218,7 +274,6 @@ const TYPES = {
     },
     ["type", "at"],
   ),
-  labels: objectSchema({}, []),
 } as const;
 
 function commandSchema(
@@ -227,13 +282,13 @@ function commandSchema(
     name: string;
     kind: "boolean" | "string" | "integer" | "repeat";
     enum?: string[];
-    default?: string;
+    default?: string | number | boolean;
   }>,
-  outputRef: keyof typeof TYPES,
+  outputRef: keyof typeof $DEFS,
 ): JsonSchema {
   return objectSchema(
     {
-      args: { const: args },
+      args: { type: "string", const: args },
       options: {
         type: "object",
         properties: Object.fromEntries(
@@ -245,14 +300,17 @@ function commandSchema(
                   ? "integer"
                   : option.kind === "boolean"
                     ? "boolean"
-                    : "string",
+                    : option.kind === "repeat"
+                      ? "array"
+                      : "string",
+              ...(option.kind === "repeat" ? { items: { type: "string" } } : {}),
               ...(option.enum === undefined ? {} : { enum: option.enum }),
-              ...(option.default === undefined ? {} : { const: option.default }),
+              ...(option.default === undefined ? {} : { default: option.default }),
             },
           ]),
         ),
       },
-      output: { $ref: `#/types/${outputRef}` },
+      output: { $ref: `#/$defs/${outputRef}` },
     },
     ["args", "options", "output"],
   );
@@ -278,7 +336,6 @@ export const CLI_SCHEMA = {
       },
     },
     reasons: { type: "array", items: { enum: ["done", "blocked", "error", "message", "timeout"] } },
-    types: { type: "object", properties: TYPES },
     commands: {
       type: "object",
       properties: {
@@ -297,7 +354,7 @@ export const CLI_SCHEMA = {
             { name: "--no-parent", kind: "boolean" },
             { name: "--no-notify", kind: "boolean" },
             { name: "--raw", kind: "boolean" },
-            { name: "--timeout", kind: "integer", default: "180" },
+            { name: "--timeout", kind: "integer", default: 180 },
             { name: "--json", kind: "boolean" },
           ],
           "runSummary",
@@ -308,7 +365,7 @@ export const CLI_SCHEMA = {
             { name: "--if", kind: "string", enum: ["idle", "done", "working"] },
             { name: "--force", kind: "boolean" },
             { name: "--wait", kind: "boolean" },
-            { name: "--timeout", kind: "integer", default: "180" },
+            { name: "--timeout", kind: "integer", default: 180 },
             { name: "--title", kind: "string" },
             { name: "--no-notify", kind: "boolean" },
             { name: "--raw", kind: "boolean" },
@@ -320,7 +377,7 @@ export const CLI_SCHEMA = {
           "[c]",
           [
             { name: "--children", kind: "string", enum: ["any", "all"] },
-            { name: "--timeout", kind: "integer", default: "180" },
+            { name: "--timeout", kind: "integer", default: 180 },
             { name: "--json", kind: "boolean" },
           ],
           "waitResult",
@@ -328,9 +385,9 @@ export const CLI_SCHEMA = {
         read: commandSchema(
           "[c]",
           [
-            { name: "--turns", kind: "integer", default: "1" },
+            { name: "--turns", kind: "integer", default: 1 },
             { name: "--steps", kind: "boolean" },
-            { name: "--lines", kind: "integer", default: "50" },
+            { name: "--lines", kind: "integer", default: 50 },
             { name: "--full", kind: "boolean" },
             { name: "--artifact", kind: "string" },
             { name: "--json", kind: "boolean" },
@@ -351,34 +408,34 @@ export const CLI_SCHEMA = {
             },
             { name: "--json", kind: "boolean" },
           ],
-          "lsRow",
+          "lsOutput",
         ),
-        label: commandSchema("<c> <k=v...>", [{ name: "--json", kind: "boolean" }], "labels"),
-        kill: commandSchema("<c>", [{ name: "--json", kind: "boolean" }], "receipt"),
+        label: commandSchema("<c> <k=v...>", [{ name: "--json", kind: "boolean" }], "labelResult"),
+        kill: commandSchema("<c>", [{ name: "--json", kind: "boolean" }], "controlResult"),
         rm: commandSchema(
           "<c>",
           [
             { name: "--purge-brain", kind: "boolean" },
             { name: "--json", kind: "boolean" },
           ],
-          "receipt",
+          "controlResult",
         ),
-        interrupt: commandSchema("<c>", [{ name: "--json", kind: "boolean" }], "receipt"),
-        templates: commandSchema("", [{ name: "--json", kind: "boolean" }], "templateRow"),
+        interrupt: commandSchema("<c>", [{ name: "--json", kind: "boolean" }], "controlResult"),
+        templates: commandSchema("", [{ name: "--json", kind: "boolean" }], "templatesOutput"),
         events: commandSchema(
           "",
           [
             { name: "--target", kind: "string" },
             { name: "--children-of", kind: "string" },
             { name: "--label", kind: "repeat" },
-            { name: "--heartbeat-ms", kind: "integer", default: "15000" },
+            { name: "--heartbeat-ms", kind: "integer", default: 15000 },
             { name: "--json", kind: "boolean" },
           ],
           "event",
         ),
         status: commandSchema("", [{ name: "--json", kind: "boolean" }], "statusReport"),
-        schema: commandSchema("", [], "statusReport"),
       },
     },
   },
+  $defs: $DEFS,
 } as const;

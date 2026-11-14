@@ -12,14 +12,14 @@ export async function runLabelCommand(
   context: { env: Record<string, string | undefined>; stdout: StreamLike },
 ): Promise<number> {
   const flags = parseCommandFlags(args, { booleans: ["json"], values: [] });
-  const target = flags.positionals[0];
-  if (target === undefined) {
-    throw new AgCliError("invalid_usage", "label requires a target");
-  }
-  const pairs = flags.positionals.slice(1);
-  if (pairs.length === 0) {
+  if (flags.positionals.length < 2) {
+    if (flags.positionals.length === 0) {
+      throw new AgCliError("invalid_usage", "label requires a target");
+    }
     throw new AgCliError("invalid_usage", "label requires at least one key=value pair");
   }
+  const target = flags.positionals[0] as string;
+  const pairs = flags.positionals.slice(1);
 
   const paths = resolvePaths(context.env);
   const store = StateStore.open(paths.stateDbPath, { create: true });
@@ -35,7 +35,7 @@ export async function runLabelCommand(
     );
     const payload = {
       conversationId: resolved.conversationId,
-      shortId: row.shortId,
+      shortId: `c${row.shortId}`,
       name: row.name,
       labels,
     };

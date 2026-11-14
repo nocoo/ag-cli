@@ -3,7 +3,7 @@ import { resolveTarget } from "../../domain/target-resolver";
 import { maxStepIndex } from "../../domain/transcript-parser";
 import { AgentApiClient } from "../../infra/agentapi-client";
 import { resolvePaths } from "../../infra/paths";
-import { StateStore } from "../../infra/state-store";
+import { type DeliveryTicket, StateStore } from "../../infra/state-store";
 import { openSummariesReader } from "../../infra/summaries-reader";
 import { AgCliError } from "../../types/protocol";
 import { emitJson, emitText, resolveMode, type StreamLike } from "../format";
@@ -21,9 +21,12 @@ export async function runSendCommand(
     booleans: ["force", "wait", "no-notify", "raw", "json"],
     values: ["if", "timeout", "title"],
   });
-  const target = flags.positionals[0];
-  const text = flags.positionals.slice(1).join(" ");
-  if (target === undefined || target.length === 0) {
+  if (flags.positionals.length !== 2) {
+    throw new AgCliError("invalid_usage", "send requires exactly a target and a message");
+  }
+  const target = flags.positionals[0] as string;
+  const text = flags.positionals[1] as string;
+  if (target.length === 0) {
     throw new AgCliError("invalid_usage", "send requires a target and a message");
   }
   if (text.length === 0) {
@@ -42,21 +45,24 @@ export async function runSendCommand(
     const resolved = resolveTarget(target, buildTargetRegistry(paths, reader, store), {
       callerId: currentCallerId(context.env),
     });
-    const wasManaged = store.findByConversationId(resolved.conversationId) !== undefined;
-    const row = store.ensureConversation(resolved.conversationId);
+    const managedBefore = store.findByConversationId(resolved.conversationId);
     const observation = observeConversation(paths, reader, resolved.conversationId, store);
+    const label =
+      managedBefore === undefined
+        ? resolved.conversationId.slice(0, 8)
+        : `c${managedBefore.shortId}`;
 
     if (ifStatus !== undefined && observation.status !== ifStatus) {
       throw new AgCliError(
         "precondition_failed",
-        `conversation c${row.shortId}${row.name === null ? "" : ` (${row.name})`} is currently ${observation.status}, expected ${ifStatus}`,
+        `conversation ${label}${managedBefore?.name === null || managedBefore?.name === undefined ? "" : ` (${managedBefore.name})`} is currently ${observation.status}, expected ${ifStatus}`,
         { hint: "Run `ag-cli wait <c>` first or omit --if to queue the message." },
       );
     }
     if (observation.status === "blocked" && !flags.flags.has("force")) {
       throw new AgCliError(
         "blocked_conversation",
-        `conversation c${row.shortId} is blocked waiting for approval or an answer`,
+        `conversation ${label} is blocked waiting for approval or an answer`,
         { hint: "Inspect with `ag-cli read <c> --steps`, then resend with --force." },
       );
     }
@@ -70,28 +76,27 @@ export async function runSendCommand(
     });
 
     const watermarkStep = maxStepIndex(observation.steps) + 1;
-    const previousWatermark = row.watermarkStep;
-    let watermarkApplied = false;
+    let ticket: DeliveryTicket | undefined;
     try {
       const client = await AgentApiClient.connect({
         antigravityDir: paths.antigravityDir,
         agentapiBin: paths.agentapiBin,
         baseEnv: context.env,
       });
-      store.updateWatermark(resolved.conversationId, watermarkStep);
-      watermarkApplied = true;
+      ticket = store.beginDelivery(resolved.conversationId, watermarkStep);
       await client.sendMessage(resolved.conversationId, message, {
         title: flags.values.get("title"),
       });
     } catch (error) {
-      if (watermarkApplied) {
-        store.restoreWatermark(resolved.conversationId, watermarkStep, previousWatermark);
-      }
-      if (!wasManaged) {
-        store.removeConversation(resolved.conversationId);
+      if (ticket !== undefined) {
+        store.rollbackDelivery(resolved.conversationId, ticket);
       }
       throw error;
     }
+    const row = store.findByConversationId(resolved.conversationId) as {
+      shortId: number;
+      name: string | null;
+    };
 
     let waitReason: string | undefined;
     let waitStatus: string | undefined;

@@ -340,23 +340,6 @@ export class StateStore {
     }
   }
 
-  updateWatermark(conversationId: string, watermarkStep: number): void {
-    this.db
-      .prepare(
-        "UPDATE conversations SET watermark_step = ?, updated_at = ? WHERE conversation_id = ?",
-      )
-      .run(watermarkStep, this.now(), conversationId);
-  }
-
-  restoreWatermark(conversationId: string, expected: number, previous: number): void {
-    this.db
-      .prepare(
-        "UPDATE conversations SET watermark_step = ?, updated_at = ?" +
-          " WHERE conversation_id = ? AND watermark_step = ?",
-      )
-      .run(previous, this.now(), conversationId, expected);
-  }
-
   releaseName(conversationId: string): void {
     this.db
       .prepare("UPDATE conversations SET name = NULL, updated_at = ? WHERE conversation_id = ?")
