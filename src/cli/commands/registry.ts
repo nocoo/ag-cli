@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { deriveConversationStatus, type StateFacts } from "../../domain/state-machine";
-import type { TargetRegistry } from "../../domain/target-resolver";
+import type { ManagedConversation, TargetRegistry } from "../../domain/target-resolver";
 import {
   aggregateTelemetry,
   parseTranscriptText,
@@ -10,8 +10,8 @@ import {
   type TranscriptTelemetry,
   type TranscriptTurn,
 } from "../../domain/transcript-parser";
-import type { ResolvedPaths } from "../../infra/paths";
-import { resolveCallerId } from "../../infra/paths";
+import { type ResolvedPaths, resolveCallerId } from "../../infra/paths";
+import type { StateStore } from "../../infra/state-store";
 import {
   type BrainArtifact,
   type ConversationSummaryRow,
@@ -22,6 +22,7 @@ import {
 export interface ConversationObservation {
   conversationId: string;
   summary: ConversationSummaryRow | undefined;
+  managed: ReturnType<StateStore["findByConversationId"]>;
   steps: TranscriptStep[];
   turns: TranscriptTurn[];
   telemetry: TranscriptTelemetry;
@@ -68,9 +69,19 @@ function readTranscriptFile(antigravityDir: string, conversationId: string, file
 export function buildTargetRegistry(
   paths: ResolvedPaths,
   reader: SummariesReader | null,
+  store: StateStore | null = null,
 ): TargetRegistry {
+  const managed: ManagedConversation[] =
+    store === null
+      ? []
+      : store.listManaged().map((row) => ({
+          shortId: row.shortId,
+          conversationId: row.conversationId,
+          name: row.name,
+          terminated: row.terminated,
+        }));
   return {
-    managed: [],
+    managed,
     summaryIds: reader === null ? [] : reader.listConversations().map((row) => row.conversation_id),
     brainIds: collectBrainIds(paths.brainDir),
   };
@@ -80,10 +91,12 @@ export function observeConversation(
   paths: ResolvedPaths,
   reader: SummariesReader | null,
   conversationId: string,
+  store: StateStore | null = null,
   steps: TranscriptStep[] = loadTranscriptSteps(paths.antigravityDir, conversationId),
 ): ConversationObservation {
   const summary = reader?.getConversation(conversationId);
-  const watermarkStep = -1;
+  const managed = store?.findByConversationId(conversationId) ?? undefined;
+  const watermarkStep = managed?.watermarkStep ?? -1;
   const facts: StateFacts = {
     summary:
       summary === undefined
@@ -93,12 +106,14 @@ export function observeConversation(
             not_fully_idle: summary.not_fully_idle,
             killed: summary.killed,
           },
+    terminated: managed?.terminated ?? 0,
     watermarkStep,
     steps,
   };
   return {
     conversationId,
     summary,
+    managed,
     steps,
     turns: segmentTurns(steps),
     telemetry: aggregateTelemetry(steps),

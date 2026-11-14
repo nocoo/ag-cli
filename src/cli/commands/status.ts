@@ -1,6 +1,7 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import { inspectDaemons } from "../../infra/daemon-discovery";
 import { resolvePaths } from "../../infra/paths";
+import { StateStore } from "../../infra/state-store";
 import { openSummariesReader } from "../../infra/summaries-reader";
 import { emitJson, emitText, resolveMode, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
@@ -16,7 +17,7 @@ export interface StatusPayload {
   };
   summaries: { readable: boolean; conversations: number };
   agentapi: { present: boolean; executable: boolean; path: string };
-  stateDb: { present: boolean; path: string };
+  stateDb: { present: boolean; path: string; managed: number };
 }
 
 export async function runStatusCommand(
@@ -53,6 +54,13 @@ export async function runStatusCommand(
     reader.close();
   }
 
+  const stateStore = StateStore.open(paths.stateDbPath);
+  let managed = 0;
+  if (stateStore !== null) {
+    managed = stateStore.listManaged().length;
+    stateStore.close();
+  }
+
   const agentapi = {
     present: existsSync(paths.agentapiBin),
     executable: false,
@@ -71,7 +79,7 @@ export async function runStatusCommand(
     daemon,
     summaries: { readable: reader !== null, conversations },
     agentapi,
-    stateDb: { present: existsSync(paths.stateDbPath), path: paths.stateDbPath },
+    stateDb: { present: existsSync(paths.stateDbPath), path: paths.stateDbPath, managed },
   };
 
   const mode = resolveMode({
@@ -91,7 +99,7 @@ export async function runStatusCommand(
         ...daemon.problems.map((problem) => `  problem: ${problem}`),
         `summaries: ${payload.summaries.readable ? `readable (${conversations} conversations)` : "missing"}`,
         `agentapi: ${agentapi.present && agentapi.executable ? "present and executable" : agentapi.present ? "present but not executable" : "missing"} (${agentapi.path})`,
-        `state.db: ${payload.stateDb.present ? "present" : "not initialized"} (${payload.stateDb.path})`,
+        `state.db: ${payload.stateDb.present ? `present (${managed} managed)` : "not initialized"} (${payload.stateDb.path})`,
       ].join("\n"),
     );
   }

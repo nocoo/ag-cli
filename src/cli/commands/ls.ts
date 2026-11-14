@@ -1,8 +1,10 @@
 import { resolvePaths } from "../../infra/paths";
+import { StateStore } from "../../infra/state-store";
 import { type ConversationSummaryRow, openSummariesReader } from "../../infra/summaries-reader";
+import { AgCliError } from "../../types/protocol";
 import { emitJson, emitText, renderTable, resolveMode, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
-import { type ConversationObservation, observeConversation } from "./registry";
+import { type ConversationObservation, currentCallerId, observeConversation } from "./registry";
 
 export interface LsRow {
   shortId: string;
@@ -14,6 +16,8 @@ export interface LsRow {
   title: string;
   project: string;
   updated: string;
+  labels: Record<string, string>;
+  terminated: boolean;
 }
 
 function firstWorkspace(row: ConversationSummaryRow): string {
@@ -33,66 +37,141 @@ export async function runLsCommand(
   args: string[],
   context: { env: Record<string, string | undefined>; stdout: StreamLike },
 ): Promise<number> {
-  const flags = parseCommandFlags(args, { booleans: ["json", "all"], values: ["status"] });
+  const flags = parseCommandFlags(args, {
+    booleans: ["json", "all", "children"],
+    values: ["status"],
+    repeatables: ["label"],
+  });
   const paths = resolvePaths(context.env);
   const reader = openSummariesReader(paths.summariesDbPath);
-  const rows = reader === null ? [] : reader.listConversations();
-
-  const statusFilter = flags.values.get("status");
-  const rowsOut: LsRow[] = [];
+  const store = StateStore.open(paths.stateDbPath);
   try {
-    for (const row of rows) {
-      if (row.killed === 1 && !flags.flags.has("all")) {
+    const showAll = flags.flags.has("all");
+    const allManaged = store?.listManaged() ?? [];
+    const managedRows = showAll ? allManaged : allManaged.filter((row) => row.terminated === 0);
+    const summaryRows = reader === null ? [] : reader.listConversations();
+    const seen = new Set<string>(allManaged.map((row) => row.conversationId));
+    const candidates: Array<{ conversationId: string; summary?: ConversationSummaryRow }> = [];
+    for (const row of managedRows) {
+      seen.add(row.conversationId);
+      candidates.push({
+        conversationId: row.conversationId,
+        summary: summaryRows.find((entry) => entry.conversation_id === row.conversationId),
+      });
+    }
+    for (const row of summaryRows) {
+      if (seen.has(row.conversation_id)) {
         continue;
       }
-      const observation = observeConversation(paths, reader, row.conversation_id);
+      if (row.killed === 1 && !showAll) {
+        continue;
+      }
+      candidates.push({ conversationId: row.conversation_id, summary: row });
+    }
+
+    const labelFilters = flags.repeatable.get("label") ?? [];
+    for (const pair of labelFilters) {
+      if (pair.indexOf("=") < 1) {
+        throw new AgCliError("invalid_usage", `invalid --label ${pair}`, {
+          hint: "Use --label key=value.",
+        });
+      }
+    }
+
+    const callerId = flags.flags.has("children") ? currentCallerId(context.env) : undefined;
+    if (flags.flags.has("children") && callerId === undefined) {
+      throw new AgCliError(
+        "invalid_usage",
+        "missing_target: --children needs a caller conversation",
+        {
+          hint: "Run inside an Antigravity conversation or set AG_CLI_CALLER_ID.",
+        },
+      );
+    }
+
+    const statusFilter = flags.values.get("status");
+    const rowsOut: LsRow[] = [];
+    for (const candidate of candidates) {
+      const observation = observeConversation(paths, reader, candidate.conversationId, store);
       if (statusFilter !== undefined && observation.status !== statusFilter) {
         continue;
       }
-      rowsOut.push(toLsRow(row, observation));
+      const labels = Object.fromEntries(
+        (store?.listLabels(candidate.conversationId) ?? []).map((label) => [
+          label.key,
+          label.value,
+        ]),
+      );
+      if (
+        !labelFilters.every((pair) => {
+          const separator = pair.indexOf("=");
+          return labels[pair.slice(0, separator)] === pair.slice(separator + 1);
+        })
+      ) {
+        continue;
+      }
+      if (
+        callerId !== undefined &&
+        observation.managed?.parentId !== callerId &&
+        candidate.summary?.parent_conversation_id !== callerId
+      ) {
+        continue;
+      }
+      rowsOut.push(toLsRow(candidate, observation, labels));
     }
+
+    const mode = resolveMode({
+      json: flags.flags.has("json"),
+      tty: context.stdout.isTTY === true,
+      pipedIsJson: true,
+    });
+    if (mode === "json") {
+      emitJson(context.stdout, rowsOut);
+    } else {
+      emitText(
+        context.stdout,
+        renderTable(
+          ["SHORT", "NAME", "STATUS", "TURN", "STEPS", "TITLE", "PROJECT/CWD", "UPDATED"],
+          rowsOut.map((row) => [
+            row.shortId,
+            row.name,
+            row.status,
+            String(row.turn),
+            String(row.stepCount),
+            row.title,
+            row.project,
+            row.updated,
+          ]),
+        ),
+      );
+    }
+    return 0;
   } finally {
     reader?.close();
+    store?.close();
   }
-
-  const mode = resolveMode({
-    json: flags.flags.has("json"),
-    tty: context.stdout.isTTY === true,
-    pipedIsJson: true,
-  });
-  if (mode === "json") {
-    emitJson(context.stdout, rowsOut);
-  } else {
-    emitText(
-      context.stdout,
-      renderTable(
-        ["SHORT", "NAME", "STATUS", "TURN", "STEPS", "TITLE", "PROJECT/CWD", "UPDATED"],
-        rowsOut.map((row) => [
-          row.shortId,
-          row.name,
-          row.status,
-          String(row.turn),
-          String(row.stepCount),
-          row.title,
-          row.project,
-          row.updated,
-        ]),
-      ),
-    );
-  }
-  return 0;
 }
 
-function toLsRow(row: ConversationSummaryRow, observation: ConversationObservation): LsRow {
+function toLsRow(
+  candidate: { conversationId: string; summary?: ConversationSummaryRow },
+  observation: ConversationObservation,
+  labels: Record<string, string>,
+): LsRow {
+  const managed = observation.managed;
+  const steps = observation.telemetry.stepCount;
+  const summarySteps = candidate.summary?.step_count ?? 0;
+  const workspace = candidate.summary === undefined ? "" : firstWorkspace(candidate.summary);
   return {
-    shortId: "-",
-    name: "-",
-    conversationId: row.conversation_id,
+    shortId: managed === undefined ? "-" : `c${managed.shortId}`,
+    name: managed?.name ?? "-",
+    conversationId: candidate.conversationId,
     status: observation.status,
     turn: observation.turns.length,
-    stepCount: row.step_count,
-    title: row.title ?? "",
-    project: firstWorkspace(row),
-    updated: row.last_modified_time ?? "",
+    stepCount: steps > 0 ? steps : summarySteps,
+    title: candidate.summary?.title ?? "",
+    project: workspace.length > 0 ? workspace : (managed?.cwd ?? ""),
+    updated: managed?.updatedAt ?? candidate.summary?.last_modified_time ?? "",
+    labels,
+    terminated: managed?.terminated === 1,
   };
 }

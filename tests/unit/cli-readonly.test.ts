@@ -5,6 +5,7 @@ import { collectBrainIds, observeConversation } from "../../src/cli/commands/reg
 import type { StreamLike } from "../../src/cli/format";
 import { type CliContext, parseCommandFlags, runCli } from "../../src/cli/index";
 import { resolvePaths } from "../../src/infra/paths";
+import { StateStore } from "../../src/infra/state-store";
 import {
   createSandbox,
   initSummariesDb,
@@ -105,6 +106,203 @@ describe("registry helpers", () => {
     const observation = observeConversation(paths, null, brainOnly);
     expect(observation.status).toBe("idle");
     expect(observation.telemetry.stepCount).toBe(2);
+  });
+});
+
+describe("state-backed conversations", () => {
+  it("lists managed conversations with short ids, names and labels", async () => {
+    const instance = sandbox();
+    const conversationId = await prepareConversation(instance);
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    store.registerConversation(conversationId, { name: "deps-clip", cwd: "/tmp/clip" });
+    store.setLabels(conversationId, ["task=deps", "repo=clip"]);
+    store.close();
+
+    const ctx = context(false, instance.env);
+    const code = await runCli(["ls"], ctx);
+    expect(code).toBe(0);
+    const rows =
+      stdoutJson<
+        Array<{
+          shortId: string;
+          name: string;
+          labels: Record<string, string>;
+          project: string;
+          status: string;
+        }>
+      >(ctx);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      shortId: "c1",
+      name: "deps-clip",
+      labels: { task: "deps", repo: "clip" },
+      project: "/tmp/clip",
+      status: "done",
+    });
+  });
+
+  it("filters by repeated --label pairs with AND semantics", async () => {
+    const instance = sandbox();
+    const first = await prepareConversation(instance, "first");
+    runAgentapi(instance, ["new-conversation", "--message", "second"]);
+    const second = "";
+    expect(second).toBe("");
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    const secondRow = store.listManaged().length; // no rows yet
+    expect(secondRow).toBe(0);
+    const summaries = (await import("../../src/infra/summaries-reader")).openSummariesReader(
+      instance.summariesDbPath,
+    );
+    const allIds = summaries?.listConversations().map((row) => row.conversation_id) ?? [];
+    summaries?.close();
+    store.registerConversation(first, { name: "first" });
+    store.setLabels(first, ["task=a", "repo=x"]);
+    const other = allIds.find((id) => id !== first) as string;
+    store.registerConversation(other, { name: "second" });
+    store.setLabels(other, ["task=a", "repo=y"]);
+    store.close();
+
+    const bothCtx = context(false, instance.env);
+    await runCli(["ls", "--label", "task=a"], bothCtx);
+    expect(stdoutJson<Array<{ name: string }>>(bothCtx)).toHaveLength(2);
+
+    const narrowCtx = context(false, instance.env);
+    await runCli(["ls", "--label", "task=a", "--label", "repo=y"], narrowCtx);
+    const narrow = stdoutJson<Array<{ name: string }>>(narrowCtx);
+    expect(narrow).toHaveLength(1);
+    expect(narrow[0]?.name).toBe("second");
+
+    const noneCtx = context(false, instance.env);
+    await runCli(["ls", "--label", "task=zzz"], noneCtx);
+    expect(stdoutJson<Array<unknown>>(noneCtx)).toEqual([]);
+
+    const badCtx = context(false, instance.env);
+    const badCode = await runCli(["ls", "--label", "nope"], badCtx);
+    expect(badCode).toBe(2);
+    expect(JSON.parse(stderrText(badCtx))).toMatchObject({ error: { kind: "invalid_usage" } });
+  });
+
+  it("filters children by caller id across state and summaries", async () => {
+    const instance = sandbox();
+    const parentId = "16161616-1616-4161-8161-161616161616";
+    const child = await prepareConversation(instance);
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    store.registerConversation(child, { name: "child-a", parentId });
+    const orphan = "17171717-1717-4171-8171-171717171717";
+    store.registerConversation(orphan, { name: "orphan" });
+    store.close();
+    const db = initSummariesDb(instance);
+    db.prepare(
+      "INSERT INTO conversation_summaries (conversation_id, title, parent_conversation_id, last_modified_time) VALUES (?, ?, ?, ?)",
+    ).run(
+      "18181818-1818-4181-8181-181818181818",
+      "summary-child",
+      parentId,
+      "2026-11-14T09:00:00Z",
+    );
+    db.close();
+
+    const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parentId });
+    const code = await runCli(["ls", "--children"], ctx);
+    expect(code).toBe(0);
+    const rows = stdoutJson<Array<{ conversationId: string }>>(ctx);
+    expect(rows.map((row) => row.conversationId).sort()).toEqual(
+      [child, "18181818-1818-4181-8181-181818181818"].sort(),
+    );
+  });
+
+  it("requires a caller for --children", async () => {
+    const instance = sandbox();
+    const ctx = context(false, instance.env);
+    const code = await runCli(["ls", "--children"], ctx);
+    expect(code).toBe(2);
+    expect(JSON.parse(stderrText(ctx))).toMatchObject({ error: { kind: "invalid_usage" } });
+  });
+
+  it("hides terminated managed conversations unless --all", async () => {
+    const instance = sandbox();
+    const conversationId = await prepareConversation(instance);
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    store.registerConversation(conversationId, { name: "doomed" });
+    store.markTerminated(conversationId);
+    store.close();
+
+    const defaultCtx = context(false, instance.env);
+    await runCli(["ls"], defaultCtx);
+    expect(stdoutJson<Array<unknown>>(defaultCtx)).toEqual([]);
+
+    const allCtx = context(false, instance.env);
+    await runCli(["ls", "--all"], allCtx);
+    const rows =
+      stdoutJson<Array<{ shortId: string; status: string; terminated: boolean }>>(allCtx);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ shortId: "c1", status: "error", terminated: true });
+  });
+
+  it("reflects shortId, name, labels, parentId and watermark in get and read", async () => {
+    const instance = sandbox();
+    const conversationId = await prepareConversation(instance);
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    store.registerConversation(conversationId, {
+      name: "ui-check",
+      parentId: "19191919-1919-4191-8191-191919191919",
+    });
+    store.setLabels(conversationId, ["env=prod"]);
+    store.updateWatermark(conversationId, 0);
+    store.close();
+
+    const getCtx = context(false, instance.env);
+    await runCli(["get", "ui-check", "--json"], getCtx);
+    expect(
+      stdoutJson<{
+        shortId: number;
+        name: string;
+        parentId: string;
+        watermarkStep: number;
+        labels: Record<string, string>;
+        status: string;
+      }>(getCtx),
+    ).toMatchObject({
+      shortId: 1,
+      name: "ui-check",
+      parentId: "19191919-1919-4191-8191-191919191919",
+      watermarkStep: 0,
+      labels: { env: "prod" },
+      status: "done",
+    });
+
+    const readCtx = context(false, instance.env);
+    await runCli(["read", "c1", "--json"], readCtx);
+    expect(
+      stdoutJson<{
+        shortId: number;
+        name: string;
+        labels: Record<string, string>;
+        parentId: string;
+      }>(readCtx),
+    ).toMatchObject({
+      shortId: 1,
+      name: "ui-check",
+      labels: { env: "prod" },
+      parentId: "19191919-1919-4191-8191-191919191919",
+    });
+  });
+
+  it("reports managed counts in status", async () => {
+    const instance = sandbox();
+    const conversationId = await prepareConversation(instance);
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    store.registerConversation(conversationId, { name: "watched" });
+    store.close();
+
+    const ctx = context(false, instance.env);
+    await runCli(["status", "--json"], ctx);
+    expect(
+      stdoutJson<{ stateDb: { present: boolean; managed: number } }>(ctx).stateDb,
+    ).toMatchObject({
+      present: true,
+      managed: 1,
+    });
   });
 });
 
@@ -613,7 +811,7 @@ describe("read command", () => {
     ];
     writeFileSync(
       join(logs, "transcript.jsonl"),
-      steps.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+      `${steps.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
     );
     const fullSteps = [
       steps[0] as Record<string, unknown>,
@@ -621,7 +819,7 @@ describe("read command", () => {
     ];
     writeFileSync(
       join(logs, "transcript_full.jsonl"),
-      fullSteps.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+      `${fullSteps.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
     );
 
     const mergedCtx = context(false, instance.env);
@@ -688,7 +886,7 @@ describe("read command", () => {
     ];
     writeFileSync(
       join(logs, "transcript.jsonl"),
-      steps.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+      `${steps.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
     );
 
     const ctx = context(true, instance.env);

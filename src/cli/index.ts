@@ -14,6 +14,7 @@ export interface CliContext {
 export interface ParsedFlags {
   flags: Set<string>;
   values: Map<string, string>;
+  repeatable: Map<string, string[]>;
   positionals: string[];
 }
 
@@ -33,10 +34,11 @@ Use ag-cli --help to list commands.`;
 
 export function parseCommandFlags(
   args: string[],
-  spec: { booleans: string[]; values: string[] },
+  spec: { booleans: string[]; values: string[]; repeatables?: string[] },
 ): ParsedFlags {
   const flags = new Set<string>();
   const values = new Map<string, string>();
+  const repeatable = new Map<string, string[]>();
   const positionals: string[] = [];
   let skipNext = false;
   for (const [index, arg] of args.entries()) {
@@ -48,12 +50,18 @@ export function parseCommandFlags(
       const name = arg.slice(2);
       if (spec.booleans.includes(name)) {
         flags.add(name);
-      } else if (spec.values.includes(name)) {
+      } else if (spec.values.includes(name) || (spec.repeatables ?? []).includes(name)) {
         const value = args[index + 1];
         if (value === undefined) {
           throw new AgCliError("invalid_usage", `--${name} expects a value`);
         }
-        values.set(name, value);
+        if (spec.values.includes(name)) {
+          values.set(name, value);
+        } else {
+          const existing = repeatable.get(name) ?? [];
+          existing.push(value);
+          repeatable.set(name, existing);
+        }
         skipNext = true;
       } else {
         throw new AgCliError("invalid_usage", `unknown option --${name}`);
@@ -62,7 +70,7 @@ export function parseCommandFlags(
       positionals.push(arg);
     }
   }
-  return { flags, values, positionals };
+  return { flags, values, repeatable, positionals };
 }
 
 export async function runCli(argv: string[], context: CliContext): Promise<number> {

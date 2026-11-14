@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { resolveTarget } from "../../domain/target-resolver";
 import { latestReply, mergeFullSteps, type TranscriptStep } from "../../domain/transcript-parser";
 import { resolvePaths } from "../../infra/paths";
+import { StateStore } from "../../infra/state-store";
 import { openSummariesReader } from "../../infra/summaries-reader";
 import { AgCliError } from "../../types/protocol";
 import { emitJson, emitText, resolveMode, type StreamLike } from "../format";
@@ -55,8 +56,9 @@ export async function runReadCommand(
   const linesLimit = parsePositiveInt(flags.values.get("lines"), 50, "lines");
   const paths = resolvePaths(context.env);
   const reader = openSummariesReader(paths.summariesDbPath);
+  const store = StateStore.open(paths.stateDbPath);
   try {
-    const target = resolveTarget(flags.positionals[0], buildTargetRegistry(paths, reader), {
+    const target = resolveTarget(flags.positionals[0], buildTargetRegistry(paths, reader, store), {
       callerId: currentCallerId(context.env),
     });
 
@@ -70,7 +72,7 @@ export async function runReadCommand(
       return 0;
     }
 
-    const observation = observeConversation(paths, reader, target.conversationId);
+    const observation = observeConversation(paths, reader, target.conversationId, store);
     const steps = flags.flags.has("full")
       ? mergeFullSteps(
           observation.steps,
@@ -88,8 +90,13 @@ export async function runReadCommand(
     if (mode === "json") {
       emitJson(context.stdout, {
         conversationId: target.conversationId,
-        shortId: target.shortId ?? null,
-        name: target.name ?? null,
+        shortId: observation.managed?.shortId ?? null,
+        name: observation.managed?.name ?? null,
+        parentId:
+          observation.managed?.parentId ?? observation.summary?.parent_conversation_id ?? null,
+        labels: Object.fromEntries(
+          (store?.listLabels(target.conversationId) ?? []).map((label) => [label.key, label.value]),
+        ),
         status: observation.status,
         turn: observation.turns.length,
         reply,
@@ -132,6 +139,7 @@ export async function runReadCommand(
     return 0;
   } finally {
     reader?.close();
+    store?.close();
   }
 }
 
