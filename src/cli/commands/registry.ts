@@ -108,6 +108,12 @@ export function currentTurnAwaitingArtifactFeedback(steps: TranscriptStep[]): bo
   );
 }
 
+export function countCompletedTurns(turns: TranscriptTurn[]): number {
+  return turns.filter((turn) =>
+    turn.steps.some((step) => step.type === "PLANNER_RESPONSE" && step.status === "DONE"),
+  ).length;
+}
+
 export function observeConversation(
   paths: ResolvedPaths,
   reader: SummariesReader | null,
@@ -134,15 +140,11 @@ export function observeConversation(
     awaitingArtifactFeedback: currentTurnAwaitingArtifactFeedback(steps),
   };
   const status = deriveConversationStatus(facts);
-  if (
-    store !== null &&
-    managed !== undefined &&
-    turns.length > managed.lastTurn &&
-    (status === "done" || turns.length > 0)
-  ) {
+  const completedTurns = countCompletedTurns(turns);
+  if (store !== null && managed !== undefined && completedTurns > managed.lastTurn) {
     try {
-      store.setLastTurn(conversationId, turns.length);
-      managed.lastTurn = turns.length;
+      store.setLastTurn(conversationId, completedTurns);
+      managed.lastTurn = completedTurns;
     } catch {
       // best-effort bookkeeping: observation must never fail on a locked db
     }

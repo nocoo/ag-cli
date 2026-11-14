@@ -1,5 +1,5 @@
 import type { ConversationStatus } from "../types/protocol";
-import { hasPendingToolCalls, type TranscriptStep } from "./transcript-parser";
+import { hasPendingToolCalls, type ToolCall, type TranscriptStep } from "./transcript-parser";
 
 export interface StateFacts {
   summary?: {
@@ -53,10 +53,34 @@ function currentTurnSteps(steps: TranscriptStep[]): TranscriptStep[] {
   return inbound === -1 ? [...steps] : steps.slice(inbound);
 }
 
-function hasUnansweredQuestion(step: TranscriptStep): boolean {
-  return (step.tool_calls ?? []).some(
-    (toolCall) => toolCall.name === "ask_question" && toolCall.status !== "DONE",
-  );
+const QUESTION_TOOL = "ask_question";
+const RESOLVED_TOOL_STATUSES = new Set(["DONE", "Completed", "ERROR"]);
+
+function toolCallKey(toolCall: ToolCall): string {
+  const args = toolCall.arguments as { id?: unknown } | null | undefined;
+  const id = args?.id;
+  return typeof id === "string" && id.length > 0 ? `id:${id}` : `name:${toolCall.name ?? ""}`;
+}
+
+function isResolvedToolCall(toolCall: ToolCall): boolean {
+  return typeof toolCall.status === "string" && RESOLVED_TOOL_STATUSES.has(toolCall.status);
+}
+
+function hasPendingAskQuestion(turn: TranscriptStep[]): boolean {
+  const pending = new Set<string>();
+  for (const step of turn) {
+    for (const toolCall of step.tool_calls ?? []) {
+      const key = toolCallKey(toolCall);
+      if (isResolvedToolCall(toolCall)) {
+        pending.delete(key);
+        continue;
+      }
+      if (toolCall.name === QUESTION_TOOL) {
+        pending.add(key);
+      }
+    }
+  }
+  return pending.size > 0;
 }
 
 function isBlockedTurn(steps: TranscriptStep[], awaitingArtifactFeedback: boolean): boolean {
@@ -64,13 +88,16 @@ function isBlockedTurn(steps: TranscriptStep[], awaitingArtifactFeedback: boolea
     return true;
   }
   const turn = currentTurnSteps(steps);
+  if (hasPendingAskQuestion(turn)) {
+    return true;
+  }
   let pendingIndex = -1;
   for (let index = 0; index < turn.length; index += 1) {
     const step = turn[index];
     if (step === undefined) {
       continue;
     }
-    if (step.status === "WAITING" || hasUnansweredQuestion(step)) {
+    if (step.status === "WAITING") {
       pendingIndex = index;
     }
   }

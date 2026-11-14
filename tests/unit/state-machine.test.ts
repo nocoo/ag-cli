@@ -311,7 +311,7 @@ describe("watermark delivery semantics (review P1-3)", () => {
 });
 
 describe("blocked detection scans the whole current turn (review P2-14)", () => {
-  it("resolves an earlier ask_question once a subsequent step in the turn is DONE (review F11)", () => {
+  it("keeps an unanswered ask_question blocked despite an unrelated later DONE step (review R3 F11)", () => {
     const steps = [
       step({ step_index: 0, type: "USER_INPUT" }),
       step({
@@ -322,7 +322,112 @@ describe("blocked detection scans the whole current turn (review P2-14)", () => 
       }),
       step({ step_index: 2, type: "GENERIC", status: "DONE" }),
     ];
-    expect(deriveConversationStatus(facts({ summary: RUNNING, steps }))).toBe("working");
+    expect(deriveConversationStatus(facts({ summary: RUNNING, steps }))).toBe("blocked");
+    expect(deriveConversationStatus(facts({ summary: IDLE, steps, watermarkStep: 0 }))).toBe(
+      "blocked",
+    );
+  });
+
+  it("clears a pending ask_question only via a matching resolved ask_question call", () => {
+    const resolved = [
+      step({ step_index: 0, type: "USER_INPUT" }),
+      step({
+        step_index: 1,
+        type: "GENERIC",
+        status: "DONE",
+        tool_calls: [{ name: "ask_question", status: "WAITING" }],
+      }),
+      step({
+        step_index: 2,
+        type: "GENERIC",
+        status: "DONE",
+        tool_calls: [{ name: "ask_question", status: "DONE" }],
+      }),
+      step({ step_index: 3, type: "PLANNER_RESPONSE", status: "DONE", content: "ok" }),
+    ];
+    expect(
+      deriveConversationStatus(facts({ summary: IDLE, steps: resolved, watermarkStep: 0 })),
+    ).toBe("done");
+
+    const errored = [
+      step({ step_index: 0, type: "USER_INPUT" }),
+      step({
+        step_index: 1,
+        type: "GENERIC",
+        status: "DONE",
+        tool_calls: [{ name: "ask_question", status: "WAITING" }],
+      }),
+      step({
+        step_index: 2,
+        type: "GENERIC",
+        status: "DONE",
+        tool_calls: [{ name: "ask_question", status: "ERROR" }],
+      }),
+    ];
+    expect(deriveConversationStatus(facts({ summary: RUNNING, steps: errored }))).not.toBe(
+      "blocked",
+    );
+  });
+
+  it("an unrelated resolved tool call does not clear a pending ask_question", () => {
+    const steps = [
+      step({ step_index: 0, type: "USER_INPUT" }),
+      step({
+        step_index: 1,
+        type: "GENERIC",
+        status: "DONE",
+        tool_calls: [{ name: "ask_question", status: "WAITING" }],
+      }),
+      step({
+        step_index: 2,
+        type: "GENERIC",
+        status: "DONE",
+        tool_calls: [{ name: "read_file", status: "DONE" }],
+      }),
+    ];
+    expect(deriveConversationStatus(facts({ summary: RUNNING, steps }))).toBe("blocked");
+  });
+
+  it("matches ask_question resolution by tool call id across names", () => {
+    const pending = [
+      step({ step_index: 0, type: "USER_INPUT" }),
+      step({
+        step_index: 1,
+        type: "GENERIC",
+        status: "DONE",
+        tool_calls: [
+          { name: "ask_question", status: "WAITING", arguments: { id: "q-42", label: "first" } },
+        ],
+      }),
+    ];
+    expect(deriveConversationStatus(facts({ summary: RUNNING, steps: pending }))).toBe("blocked");
+
+    const resolvedById = [
+      ...pending,
+      step({
+        step_index: 2,
+        type: "GENERIC",
+        status: "DONE",
+        tool_calls: [{ name: "confirm", status: "DONE", arguments: { id: "q-42" } }],
+      }),
+      step({ step_index: 3, type: "PLANNER_RESPONSE", status: "DONE", content: "answered" }),
+    ];
+    expect(
+      deriveConversationStatus(facts({ summary: IDLE, steps: resolvedById, watermarkStep: 0 })),
+    ).toBe("done");
+
+    const differentId = [
+      ...pending,
+      step({
+        step_index: 2,
+        type: "GENERIC",
+        status: "DONE",
+        tool_calls: [{ name: "confirm", status: "DONE", arguments: { id: "q-other" } }],
+      }),
+    ];
+    expect(deriveConversationStatus(facts({ summary: RUNNING, steps: differentId }))).toBe(
+      "blocked",
+    );
   });
 
   it("resolves a mid-turn WAITING step once a later step in the same turn is DONE (review F11)", () => {

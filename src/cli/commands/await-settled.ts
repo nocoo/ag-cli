@@ -3,7 +3,7 @@ import type { StateStore } from "../../infra/state-store";
 import type { SummariesReader } from "../../infra/summaries-reader";
 import { TranscriptWatcher } from "../../infra/transcript-watcher";
 import type { ConversationStatus } from "../../types/protocol";
-import { observeConversation } from "./registry";
+import { countCompletedTurns, observeConversation } from "./registry";
 
 export interface SettleOutcome {
   status: ConversationStatus;
@@ -78,7 +78,7 @@ export async function awaitSettledStatus(options: {
       try {
         const fresh = observation();
         if (fresh.status === "done" && options.store !== null) {
-          const turns = fresh.turns.length;
+          const turns = countCompletedTurns(fresh.turns);
           const managed = options.store.findByConversationId(options.conversationId);
           if (managed !== undefined && turns > managed.lastTurn) {
             options.store.setLastTurn(options.conversationId, turns);

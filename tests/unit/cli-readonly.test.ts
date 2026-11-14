@@ -107,6 +107,47 @@ describe("registry helpers", () => {
     expect(observation.status).toBe("idle");
     expect(observation.telemetry.stepCount).toBe(2);
   });
+
+  it("ignores artifact feedback requests that already completed", () => {
+    const instance = sandbox();
+    const paths = resolvePaths(instance.env);
+    const conversationId = "16161616-1616-4161-8161-161616161616";
+    const logs = join(instance.brainDir, conversationId, ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(
+      join(logs, "transcript.jsonl"),
+      `${JSON.stringify({ step_index: 0, type: "USER_INPUT", status: "DONE", content: "q" })}\n${JSON.stringify({ step_index: 1, type: "GENERIC", status: "DONE", tool_calls: [{ name: "review_artifact", status: "DONE", arguments: { RequestFeedback: true } }] })}\n${JSON.stringify({ step_index: 2, type: "PLANNER_RESPONSE", status: "DONE", content: "a" })}\n`,
+    );
+    const observation = observeConversation(paths, null, conversationId);
+    expect(observation.status).toBe("idle");
+  });
+
+  it("advances lastTurn only for turns with a completed planner reply (review R3 P3-31)", () => {
+    const instance = sandbox();
+    const paths = resolvePaths(instance.env);
+    const store = StateStore.open(paths.stateDbPath, { create: true });
+    const conversationId = "15151515-1515-4151-8151-151515151515";
+    store.registerConversation(conversationId, { name: "in-flight" });
+    const logs = join(instance.brainDir, conversationId, ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(
+      join(logs, "transcript.jsonl"),
+      `${JSON.stringify({ step_index: 0, type: "USER_INPUT", status: "DONE", content: "started" })}\n`,
+    );
+    try {
+      observeConversation(paths, null, conversationId, store);
+      expect(store.findByConversationId(conversationId)?.lastTurn).toBe(0);
+
+      writeFileSync(
+        join(logs, "transcript.jsonl"),
+        `${JSON.stringify({ step_index: 0, type: "USER_INPUT", status: "DONE", content: "started" })}\n${JSON.stringify({ step_index: 1, type: "GENERIC", status: "RUNNING" })}\n${JSON.stringify({ step_index: 2, type: "USER_INPUT", status: "DONE", content: "second" })}\n${JSON.stringify({ step_index: 3, type: "PLANNER_RESPONSE", status: "DONE", content: "first done" })}\n`,
+      );
+      observeConversation(paths, null, conversationId, store);
+      expect(store.findByConversationId(conversationId)?.lastTurn).toBe(1);
+    } finally {
+      store.close();
+    }
+  });
 });
 
 describe("state-backed conversations", () => {
