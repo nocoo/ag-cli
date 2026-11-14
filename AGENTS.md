@@ -21,7 +21,7 @@ bun run lint             # S2 biome check --error-on-warnings .
 bun run test:coverage    # L1 unit coverage >= 95% (statements/branches/functions/lines)
 bun run test:integration # L3
 bun run test:e2e         # L4
-bun run build            # B1 dist/index.js
+bun run build            # B1 dist/index.js + dist/skill.md + dist/ag-cli (compiled binary)
 bun run ci:package       # P1 npm pack + bin smoke test
 ```
 
@@ -31,7 +31,12 @@ must keep zero direct upstream URLs: `rg -c '", "https' bun.lock` stays empty.
 ## Hard rules
 
 - SQLite and HTTP only via built-ins: `node:sqlite` (`DatabaseSync`) and
-  `node:http`. Zero native addons so Node (vitest) and Bun behave identically.
+  `node:http` (`http.request`). Zero native addons and no `fetch`, so Node
+  (vitest) and Bun behave identically.
+- Native databases are opened read-only through `PRAGMA query_only = ON`
+  (engine-level write rejection, matching `docs/03` §5.3). File-level
+  `readOnly: true` is not used: Bun cannot query a WAL database that has no
+  live writer and therefore no `-shm` file.
 - Tests never touch real `~/.gemini/antigravity` or `~/.local/share/ag-cli`.
   Always isolate via `AG_CLI_HOME`, `AG_CLI_CONFIG_DIR`,
   `AG_CLI_ANTIGRAVITY_DIR`, `AG_CLI_AGENTAPI_BIN` into temp dirs

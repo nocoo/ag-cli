@@ -94,3 +94,35 @@ buffer, so chunks are never re-read.
 `ag-cli --skill` reads `skill.md` relative to `import.meta.url`, and the build copies
 the file next to `dist/index.js`. The manual therefore works from any directory and
 inside the packed tarball; `scripts/check-package.ts` smoke-tests it after install.
+
+## 2026-11-14 · Round 1 review lessons (ag-cli-reviewer, 32 findings)
+
+- **Validate before dispatching.** `run` created the Antigravity conversation before
+  checking `--name`/`--label`/`--timeout`, so invalid usage still dispatched work and
+  left orphan conversations. All pure validation now happens before the first
+  side effect, and `--name` may no longer shadow `cN` aliases.
+- **Validate ids at every boundary.** A mock `conversationId` of `../../victim` made
+  `rm --purge-brain` delete outside the brain root. Uuids are now asserted at the
+  agentapi response, the state store and the control commands, and every destructive
+  path is checked with `realpath` containment before the registry row is removed.
+- **Watermarks need delivery evidence.** Completion required only
+  `maxStepIndex >= watermarkStep`; the state machine now locates the inbound step at
+  or after the watermark and requires a stable reply after it, with no unfinished
+  work behind it.
+- **Undo state when delivery fails.** `send` and `run --reuse` updated the watermark
+  before contacting the daemon and never restored it, so a failed send left a
+  conversation stuck in `working`. Watermarks are now restored on failure and
+  auto-registered rows are removed again.
+- **Watching needs a database baseline.** The watcher only stat'ed the transcript and
+  opened the summaries connection lazily, so a database-only state change was missed
+  until the deadline. The watcher now primes the `data_version` baseline at start,
+  watches the WAL directory, and keeps a long-lived probe connection.
+- **Incremental reads must respect encoding and rewrites.** Buffer decoding now uses
+  `StringDecoder`, offsets advance by bytes actually read, and inode/size/mtime
+  changes reset the cursor instead of silently skipping a rewrite.
+- **Signal handling needs an explicit exit.** Bun keeps the event loop alive after a
+  signal listener is registered, so `ag-cli events` only terminates because the CLI
+  entry exits explicitly; unit tests must never call `process.exit`.
+- **The push gate must test what is pushed.** `pre-push` now checks every pushed
+  revision in an isolated snapshot instead of running the gates once in the working
+  tree.
