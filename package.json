@@ -4,8 +4,12 @@
   "type": "module",
   "license": "MIT",
   "description": "CLI runtime wrapper that dispatches tasks to local Antigravity conversations",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nocoo/ag-cli.git"
+  },
   "bin": {
-    "ag-cli": "./dist/index.js"
+    "ag-cli": "dist/index.js"
   },
   "files": [
     "dist/index.js",

@@ -29,8 +29,8 @@ function main(): void {
   };
   const binPath = pkg.bin?.["ag-cli"];
   assert(
-    binPath === "./dist/index.js",
-    `package.json bin["ag-cli"] must be "./dist/index.js", got ${binPath}`,
+    binPath === "dist/index.js" || binPath === "./dist/index.js",
+    `package.json bin["ag-cli"] must be "dist/index.js" or "./dist/index.js", got ${binPath}`,
   );
 
   console.log("check-package: running bun run build");
