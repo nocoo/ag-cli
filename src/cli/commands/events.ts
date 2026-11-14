@@ -172,8 +172,15 @@ export async function runEventsCommand(
             if (stopped) {
               return;
             }
-            const fresh = observeConversation(paths, reader, entry.conversationId, store);
-            for (const step of watcher.readNewSteps()) {
+            const freshSteps = watcher.readNewSteps();
+            const fresh = observeConversation(
+              paths,
+              reader,
+              entry.conversationId,
+              store,
+              watcher.currentSteps(),
+            );
+            for (const step of freshSteps) {
               emit({
                 type: "step",
                 conversationId: entry.conversationId,
@@ -209,6 +216,7 @@ export async function runEventsCommand(
           },
         });
         watcher.start();
+        watcher.readNewSteps();
         watchers.push(watcher);
       }
     });

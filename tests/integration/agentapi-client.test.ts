@@ -29,6 +29,42 @@ afterEach(async () => {
   }
 });
 
+describe("AgentApiClient async delivery", () => {
+  it("returns the receipt before the inbound lands on disk", async () => {
+    const instance = sandbox();
+    initSummariesDb(instance);
+    writeMockAgentapi(instance);
+    const mock = await startMockLanguageServer();
+    servers.push(mock);
+    writeHubFile(instance, {
+      pid: process.pid,
+      httpPort: mock.port,
+      httpsPort: mock.port,
+      lsVersion: "async",
+      csrfToken: mock.csrfToken,
+    });
+    const client = await AgentApiClient.connect({
+      antigravityDir: instance.antigravityDir,
+      agentapiBin: instance.agentapiBin,
+      baseEnv: {
+        ...process.env,
+        AG_MOCK_AGENTAPI_ASYNC: "1",
+        AG_MOCK_AGENTAPI_ASYNC_DELAY_MS: "400",
+      },
+    });
+
+    const started = Date.now();
+    const created = await client.newConversation({ message: "deferred" });
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(readTranscript(instance, created.conversationId)).toEqual([]);
+
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const steps = readTranscript(instance, created.conversationId);
+    expect(steps.length).toBe(3);
+    expect(steps.at(-1)).toMatchObject({ type: "PLANNER_RESPONSE", status: "DONE" });
+  }, 15000);
+});
+
 describe("AgentApiClient end-to-end against the mock stack", () => {
   it("connects through discovery and drives a full conversation", async () => {
     const instance = sandbox();

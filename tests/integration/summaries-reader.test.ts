@@ -111,6 +111,14 @@ describe("SummariesReader queries", () => {
     }
   });
 
+  it("enforces query_only on the production reader connection", () => {
+    const instance = sandbox();
+    initSummariesDb(instance);
+    const reader = openSummariesReader(instance.summariesDbPath);
+    expect(reader?.queryOnlyEnabled()).toBe(true);
+    reader?.close();
+  });
+
   it("rejects writes on read-only sqlite connections", () => {
     const instance = sandbox();
     const writer = initSummariesDb(instance);

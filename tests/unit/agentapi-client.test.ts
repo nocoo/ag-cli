@@ -1,4 +1,5 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentApiClient } from "../../src/infra/agentapi-client";
 import { openSummariesReader } from "../../src/infra/summaries-reader";
@@ -132,6 +133,35 @@ describe("agentapi subprocess wrappers", () => {
       csrf: server?.csrfToken,
       project: "proj-77",
     });
+  });
+
+  it("passes --model and per-call project ids to agentapi", async () => {
+    const instance = sandbox();
+    initSummariesDb(instance);
+    writeMockAgentapi(instance);
+    const client = await connectedClient(instance);
+
+    await client.newConversation({ message: "modelled", model: "pro", projectId: "proj-call" });
+    const callsPath = join(instance.root, "mock-agentapi-calls.jsonl");
+    const calls = readFileSync(callsPath, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { args: string[]; project: string | null });
+    const call = calls.find((entry) => entry.args.includes("--model"));
+    expect(call?.args).toEqual(expect.arrayContaining(["--model", "pro"]));
+    expect(call?.project).toBe("proj-call");
+  });
+
+  it("decodes file uris when matching project folders", async () => {
+    const instance = sandbox();
+    const client = await connectedClient(instance, {
+      responses: {
+        ListProjects: {
+          projects: [{ projectId: "proj-space", folderUri: "file:///tmp/a%20b" }],
+        },
+      },
+    });
+    expect(await client.resolveProjectIdForCwd("/tmp/a b")).toBe("proj-space");
   });
 
   it("sendMessage and getConversationMetadata round-trip", async () => {

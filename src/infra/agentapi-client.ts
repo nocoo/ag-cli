@@ -1,5 +1,8 @@
 import { execFile } from "node:child_process";
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, realpathSync } from "node:fs";
+import { request } from "node:http";
+import { resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { AgCliError } from "../types/protocol";
 import { type DaemonCandidate, discoverDaemon, type HealthProbe } from "./daemon-discovery";
@@ -49,7 +52,7 @@ export class AgentApiClient {
     );
   }
 
-  private childEnv(): Record<string, string> {
+  private childEnv(projectIdOverride?: string): Record<string, string> {
     const env: Record<string, string> = {};
     const apply = (source: Record<string, string | undefined>): void => {
       for (const [key, value] of Object.entries(source)) {
@@ -62,17 +65,18 @@ export class AgentApiClient {
     apply(this.baseEnv);
     env.ANTIGRAVITY_LS_ADDRESS = `127.0.0.1:${this.daemon.httpPort}`;
     env.ANTIGRAVITY_CSRF_TOKEN = this.daemon.csrfToken;
-    if (this.projectId !== undefined && this.projectId.length > 0) {
-      env.ANTIGRAVITY_PROJECT_ID = this.projectId;
+    const projectId = projectIdOverride ?? this.projectId;
+    if (projectId !== undefined && projectId.length > 0) {
+      env.ANTIGRAVITY_PROJECT_ID = projectId;
     }
     return env;
   }
 
-  private async runAgentapi(args: string[]): Promise<Record<string, unknown>> {
+  private async runAgentapi(args: string[], projectId?: string): Promise<Record<string, unknown>> {
     let stdout = "";
     try {
       const result = await execFileAsync(this.agentapiBin, args, {
-        env: this.childEnv(),
+        env: this.childEnv(projectId),
         timeout: 15_000,
       });
       stdout = result.stdout;
@@ -105,6 +109,8 @@ export class AgentApiClient {
     message: string;
     title?: string;
     profile?: string;
+    model?: string;
+    projectId?: string;
   }): Promise<{ conversationId: string }> {
     const args = ["new-conversation", "--message", input.message];
     if (input.title !== undefined) {
@@ -113,7 +119,10 @@ export class AgentApiClient {
     if (input.profile !== undefined) {
       args.push("--profile", input.profile);
     }
-    const payload = await this.runAgentapi(args);
+    if (input.model !== undefined) {
+      args.push("--model", input.model);
+    }
+    const payload = await this.runAgentapi(args, input.projectId);
     const conversationId = payload.conversationId;
     if (typeof conversationId !== "string" || conversationId.length === 0) {
       throw new AgCliError("runtime_error", `agentapi new-conversation returned no conversationId`);
@@ -124,13 +133,13 @@ export class AgentApiClient {
   async sendMessage(
     conversationId: string,
     message: string,
-    options: { title?: string } = {},
+    options: { title?: string; projectId?: string } = {},
   ): Promise<{ conversationId: string; stepIndex?: number }> {
     const args = ["send-message", "--conversation-id", conversationId, "--message", message];
     if (options.title !== undefined) {
       args.push("--title", options.title);
     }
-    const payload = await this.runAgentapi(args);
+    const payload = await this.runAgentapi(args, options.projectId);
     const stepIndex = payload.stepIndex;
     return { conversationId, ...(typeof stepIndex === "number" ? { stepIndex } : {}) };
   }
@@ -140,28 +149,55 @@ export class AgentApiClient {
   }
 
   private async rpc<T>(method: string, body: Record<string, unknown>): Promise<T> {
-    const url = `http://127.0.0.1:${this.daemon.httpPort}/exa.language_server_pb.LanguageServerService/${method}`;
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-codeium-csrf-token": this.daemon.csrfToken,
+    const payload = JSON.stringify(body);
+    return new Promise<T>((resolvePromise, rejectPromise) => {
+      const req = request(
+        {
+          host: "127.0.0.1",
+          port: this.daemon.httpPort,
+          path: `/exa.language_server_pb.LanguageServerService/${method}`,
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-codeium-csrf-token": this.daemon.csrfToken,
+            "content-length": Buffer.byteLength(payload),
+          },
+          timeout: 5000,
         },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(5000),
-      });
-    } catch (error) {
-      throw new AgCliError(
-        "runtime_error",
-        `RPC ${method} request failed: ${(error as Error).message}`,
+        (response) => {
+          let raw = "";
+          response.on("data", (chunk: Buffer) => {
+            raw += chunk.toString();
+          });
+          response.on("end", () => {
+            if (response.statusCode !== 200) {
+              rejectPromise(
+                new AgCliError(
+                  "runtime_error",
+                  `RPC ${method} failed with status ${response.statusCode}`,
+                ),
+              );
+              return;
+            }
+            try {
+              resolvePromise((raw.length === 0 ? {} : JSON.parse(raw)) as T);
+            } catch {
+              rejectPromise(new AgCliError("runtime_error", `RPC ${method} returned invalid json`));
+            }
+          });
+        },
       );
-    }
-    if (response.status !== 200) {
-      throw new AgCliError("runtime_error", `RPC ${method} failed with status ${response.status}`);
-    }
-    return (await response.json()) as T;
+      req.on("timeout", () => {
+        req.destroy(new Error("timeout"));
+      });
+      req.on("error", (error: Error) => {
+        rejectPromise(
+          new AgCliError("runtime_error", `RPC ${method} request failed: ${error.message}`),
+        );
+      });
+      req.write(payload);
+      req.end();
+    });
   }
 
   async listProjects(): Promise<ProjectSummary[]> {
@@ -178,11 +214,28 @@ export class AgentApiClient {
 
   async resolveProjectIdForCwd(cwd: string): Promise<string | null> {
     const projects = await this.listProjects();
+    const normalize = (value: string): string => {
+      try {
+        return realpathSync(value);
+      } catch {
+        return resolvePath(value);
+      }
+    };
+    const target = normalize(cwd);
     const match = projects.find((project) => {
       const folder = project.folderUri ?? "";
-      return (
-        folder === cwd || folder === `file://${cwd}` || folder.replace(/^file:\/\//, "") === cwd
-      );
+      if (folder.length === 0) {
+        return false;
+      }
+      let decoded = folder;
+      if (folder.startsWith("file://")) {
+        try {
+          decoded = fileURLToPath(folder);
+        } catch {
+          return false;
+        }
+      }
+      return normalize(decoded) === target;
     });
     return match?.projectId ?? null;
   }

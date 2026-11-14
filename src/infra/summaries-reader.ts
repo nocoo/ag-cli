@@ -78,6 +78,11 @@ export class SummariesReader {
     return row === undefined ? undefined : toRow(row);
   }
 
+  queryOnlyEnabled(): boolean {
+    const row = this.db.prepare("PRAGMA query_only").get() as { query_only?: number } | undefined;
+    return row?.query_only === 1;
+  }
+
   close(): void {
     this.db.close();
   }

@@ -21,9 +21,6 @@ export async function awaitSettledStatus(options: {
   timeoutSec: number;
 }): Promise<SettleOutcome> {
   const start = Date.now();
-  const check = (): ConversationStatus =>
-    observeConversation(options.paths, options.reader, options.conversationId, options.store)
-      .status;
 
   return new Promise<SettleOutcome>((resolve) => {
     let finished = false;
@@ -31,12 +28,23 @@ export async function awaitSettledStatus(options: {
       antigravityDir: options.paths.antigravityDir,
       conversationId: options.conversationId,
       summariesDbPath: options.paths.summariesDbPath,
+      stateDbPath: options.paths.stateDbPath,
       debounceMs: 20,
       fallbackMs: 500,
       onChange: () => {
         tick();
       },
     });
+    const check = (): ConversationStatus => {
+      watcher.readNewSteps();
+      return observeConversation(
+        options.paths,
+        options.reader,
+        options.conversationId,
+        options.store,
+        watcher.currentSteps(),
+      ).status;
+    };
     const finish = (timedOut: boolean): void => {
       finished = true;
       clearTimeout(deadlineTimer);

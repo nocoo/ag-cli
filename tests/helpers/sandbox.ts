@@ -235,7 +235,8 @@ const { DatabaseSync } = require("node:sqlite");
 
 const ANTIGRAVITY_DIR = ${JSON.stringify(antigravityDir)};
 const SUMMARIES_DB = join(ANTIGRAVITY_DIR, "conversation_summaries.db");
-const MODE = process.env.AG_MOCK_AGENTAPI_MODE || "done";
+const ASYNC = process.env.AG_MOCK_AGENTAPI_ASYNC === "1";
+const MODE = process.env.AG_MOCK_AGENTAPI_MODE || (ASYNC ? "async" : "done");
 const DELAY_MS = Number(process.env.AG_MOCK_AGENTAPI_DELAY_MS || 0);
 const SCHEMA = ${JSON.stringify(SUMMARIES_SCHEMA)};
 
@@ -352,14 +353,61 @@ function emit(payload) {
   process.stdout.write(JSON.stringify(payload) + "\\n");
 }
 
+function logCall(command) {
+  try {
+    appendFileSync(
+      join(ANTIGRAVITY_DIR, "..", "mock-agentapi-calls.jsonl"),
+      JSON.stringify({
+        command: String(command),
+        args: process.argv.slice(2),
+        ls: process.env.ANTIGRAVITY_LS_ADDRESS || null,
+        csrf: process.env.ANTIGRAVITY_CSRF_TOKEN || null,
+        project: process.env.ANTIGRAVITY_PROJECT_ID || null,
+      }) + "\\n"
+    );
+  } catch {
+    // logging is best effort
+  }
+}
+
+function deferTurn(id, title, message) {
+  const { spawn } = require("node:child_process");
+  const helper = join(ANTIGRAVITY_DIR, "..", "bin", "mock-agentapi-deferred.js");
+  const child = spawn(process.execPath, [helper, id, title, message], {
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, AG_MOCK_AGENTAPI_SELF: process.argv[1] },
+  });
+  child.unref();
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const command = args._[0];
+  if (command === "__deferred") {
+    const db = openDb();
+    const id = args._[1];
+    const title = args._[2] || "";
+    const message = args._[3] || "";
+    ensureConversation(id);
+    db.prepare(
+      "INSERT INTO conversation_summaries (conversation_id, title) VALUES (?, ?)" +
+        " ON CONFLICT(conversation_id) DO NOTHING"
+    ).run(id, title);
+    runTurn(db, id, title, message);
+    return;
+  }
+  logCall(command);
   const db = openDb();
 
   if (command === "new-conversation") {
     const id = randomUUID();
     ensureConversation(id);
+    if (MODE === "async") {
+      deferTurn(id, args.title || "", args.message || "");
+      emit({ conversationId: id });
+      return;
+    }
     db.prepare(
       "INSERT INTO conversation_summaries (conversation_id, title, workspace_uris) VALUES (?, ?, ?)"
     ).run(
@@ -385,6 +433,11 @@ function main() {
       process.exit(1);
     }
     ensureConversation(id);
+    if (MODE === "async") {
+      deferTurn(id, row.title || "", args.message || "");
+      emit({ conversationId: id, stepIndex: lastStepIndex(id) + 1 });
+      return;
+    }
     const inbound = lastStepIndex(id) + 1;
     runTurn(db, id, row.title || "", args.message || "");
     emit({ conversationId: id, stepIndex: inbound });
@@ -410,5 +463,41 @@ main();
 
 export function writeMockAgentapi(sandbox: Sandbox): string {
   writeFileSync(sandbox.agentapiBin, MOCK_AGENTAPI_SCRIPT(sandbox.antigravityDir), { mode: 0o755 });
+  writeFileSync(
+    join(sandbox.root, "bin", "mock-agentapi-deferred.js"),
+    MOCK_AGENTAPI_DEFERRED_SCRIPT,
+    { mode: 0o755 },
+  );
   return sandbox.agentapiBin;
+}
+
+const MOCK_AGENTAPI_DEFERRED_SCRIPT = `#!/usr/bin/env node
+"use strict";
+const { spawn } = require("node:child_process");
+const delay = Number(process.env.AG_MOCK_AGENTAPI_ASYNC_DELAY_MS || 500);
+setTimeout(() => {
+  const child = spawn(
+    process.execPath,
+    [process.env.AG_MOCK_AGENTAPI_SELF, "__deferred", ...process.argv.slice(2)],
+    { stdio: "ignore", env: process.env }
+  );
+  child.unref();
+}, delay);
+`;
+
+export function readMockAgentapiCalls(sandbox: Sandbox): Array<{
+  command: string;
+  args: string[];
+  ls: string | null;
+  csrf: string | null;
+  project: string | null;
+}> {
+  const path = join(sandbox.root, "mock-agentapi-calls.jsonl");
+  if (!existsSync(path)) {
+    return [];
+  }
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line));
 }

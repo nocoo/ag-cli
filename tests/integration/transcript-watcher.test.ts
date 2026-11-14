@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { awaitSettledStatus } from "../../src/cli/commands/await-settled";
@@ -77,6 +77,101 @@ describe("TranscriptWatcher against the mock agentapi", () => {
       };
       poll();
     });
+    watcher.close();
+  });
+});
+
+describe("summaries-only and encoding edge cases", () => {
+  it("resolves promptly on summaries-only changes through the wal directory watch", async () => {
+    const instance = sandbox();
+    const db = initSummariesDb(instance);
+    db.prepare(
+      "INSERT INTO conversation_summaries (conversation_id, status, not_fully_idle) VALUES (?, 'CASCADE_RUN_STATUS_RUNNING', 1)",
+    ).run("c1c1c1c1-c1c1-41c1-81c1-c1c1c1c1c1c1");
+    db.close();
+    const logs = join(
+      instance.brainDir,
+      "c1c1c1c1-c1c1-41c1-81c1-c1c1c1c1c1c1",
+      ".system_generated",
+      "logs",
+    );
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(
+      join(logs, "transcript.jsonl"),
+      `${JSON.stringify({ step_index: 0, type: "USER_INPUT", status: "DONE" })}\n${JSON.stringify({ step_index: 1, type: "PLANNER_RESPONSE", status: "DONE", content: "ok" })}\n`,
+    );
+
+    const paths = resolvePaths(instance.env);
+    const reader = openSummariesReader(instance.summariesDbPath);
+    const waitPromise = awaitSettledStatus({
+      paths,
+      reader,
+      store: null,
+      conversationId: "c1c1c1c1-c1c1-41c1-81c1-c1c1c1c1c1c1",
+      timeoutSec: 5,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const db2 = initSummariesDb(instance);
+    db2
+      .prepare(
+        "UPDATE conversation_summaries SET status = 'CASCADE_RUN_STATUS_IDLE', not_fully_idle = 0",
+      )
+      .run();
+    db2.close();
+
+    const started = Date.now();
+    const outcome = await waitPromise;
+    expect(outcome.status).toBe("done");
+    expect(Date.now() - started).toBeLessThan(1500);
+    reader?.close();
+  }, 10000);
+
+  it("never corrupts split multi-byte utf-8 sequences", () => {
+    const instance = sandbox();
+    const conversationId = "c2c2c2c2-c2c2-42c2-82c2-c2c2c2c2c2c2";
+    const logs = join(instance.brainDir, conversationId, ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    const path = join(logs, "transcript.jsonl");
+    writeFileSync(path, "");
+    const watcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId,
+      onChange: () => {},
+    });
+    const payload = Buffer.from(
+      `${JSON.stringify({ step_index: 0, type: "USER_INPUT", status: "DONE", content: "中文" })}\n`,
+      "utf8",
+    );
+    const split = payload.length - 4;
+    appendFileSync(path, payload.subarray(0, split));
+    expect(watcher.readNewSteps()).toEqual([]);
+    appendFileSync(path, payload.subarray(split));
+    const steps = watcher.readNewSteps();
+    expect(steps).toHaveLength(1);
+    expect(steps[0]?.content).toBe("中文");
+    watcher.close();
+  });
+
+  it("detects same-size rewrites", () => {
+    const instance = sandbox();
+    const conversationId = "c3c3c3c3-c3c3-43c3-83c3-c3c3c3c3c3c3";
+    const logs = join(instance.brainDir, conversationId, ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    const path = join(logs, "transcript.jsonl");
+    const first = `${JSON.stringify({ step_index: 0, type: "USER_INPUT", status: "DONE", content: "A" })}\n`;
+    const second = `${JSON.stringify({ step_index: 0, type: "USER_INPUT", status: "DONE", content: "B" })}\n`;
+    expect(first.length).toBe(second.length);
+    writeFileSync(path, first);
+    const watcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId,
+      onChange: () => {},
+    });
+    expect(watcher.readNewSteps()).toHaveLength(1);
+    writeFileSync(path, second);
+    const rewritten = watcher.readNewSteps();
+    expect(rewritten).toHaveLength(1);
+    expect(rewritten[0]?.content).toBe("B");
     watcher.close();
   });
 });
