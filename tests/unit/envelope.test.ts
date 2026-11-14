@@ -4,6 +4,11 @@ import { buildEnvelope, detectCallerContext, wrapOutboundPrompt } from "../../sr
 const AG_UUID = "a464a19f-0e6a-4c5f-9d5c-1b2c3d4e5f60";
 
 describe("detectCallerContext", () => {
+  it("rejects invalid caller and terminal ids", () => {
+    expect(() => detectCallerContext({ ANTIGRAVITY_CONVERSATION_ID: "not-a-uuid" })).toThrow();
+    expect(() => detectCallerContext({ HC_TERMINAL_ID: "t7; rm -rf /" })).toThrow();
+  });
+
   it("detects an Antigravity caller via ANTIGRAVITY_CONVERSATION_ID", () => {
     expect(detectCallerContext({ ANTIGRAVITY_CONVERSATION_ID: AG_UUID })).toEqual({
       kind: "ag-cli",
@@ -42,7 +47,7 @@ describe("buildEnvelope (docs/02 §4)", () => {
     );
     expect(envelope).toBe(
       '<ag-cli from="c3 a464a19f" cwd="/Users/nocoo/workspace/personal/clip" ' +
-        'reach="ag-cli send c3 \\"<summary or artifact path>\\" when done or blocked">\n' +
+        `reach="ag-cli send ${AG_UUID} \\"<summary or artifact path>\\" when done or blocked">\n` +
         "请升级依赖并创建 PR。\n" +
         "</ag-cli>",
     );
@@ -54,9 +59,9 @@ describe("buildEnvelope (docs/02 §4)", () => {
       { kind: "ag-cli", conversationId: AG_UUID },
       { cwd: "/w" },
     );
-    expect(envelope).toContain('from="a464a19f"');
+    expect(envelope).toContain(`from="${AG_UUID}"`);
     expect(envelope).toContain(
-      'reach="ag-cli send a464a19f \\"<summary or artifact path>\\" when done or blocked"',
+      `reach="ag-cli send ${AG_UUID} \\"<summary or artifact path>\\" when done or blocked"`,
     );
   });
 
@@ -76,14 +81,27 @@ describe("buildEnvelope (docs/02 §4)", () => {
 });
 
 describe("wrapOutboundPrompt", () => {
-  it("keeps the message raw without a caller", () => {
-    expect(wrapOutboundPrompt("plain", null, { cwd: "/w" })).toBe("plain");
+  it("injects a cwd-only envelope without a caller", () => {
+    expect(wrapOutboundPrompt("plain", null, { cwd: "/w" })).toBe(
+      '<ag-cli cwd="/w">\nplain\n</ag-cli>',
+    );
   });
 
-  it("skips the envelope with --no-notify or --raw", () => {
+  it("drops from and reach with --no-notify but keeps the cwd context", () => {
     const caller = { kind: "hc" as const, terminalId: "t7" };
-    expect(wrapOutboundPrompt("plain", caller, { cwd: "/w", noNotify: true })).toBe("plain");
+    const wrapped = wrapOutboundPrompt("plain", caller, { cwd: "/w", noNotify: true });
+    expect(wrapped).toBe('<ag-cli cwd="/w">\nplain\n</ag-cli>');
+    expect(wrapped).not.toContain("reach=");
+  });
+
+  it("keeps the message raw with --raw", () => {
+    const caller = { kind: "hc" as const, terminalId: "t7" };
     expect(wrapOutboundPrompt("plain", caller, { cwd: "/w", raw: true })).toBe("plain");
+  });
+
+  it("escapes xml attributes", () => {
+    const envelope = buildEnvelope("task", { kind: "hc", terminalId: "t7" }, { cwd: '/tmp/"<&>' });
+    expect(envelope).toContain('cwd="/tmp/&quot;&lt;&amp;&gt;"');
   });
 
   it("wraps by default", () => {

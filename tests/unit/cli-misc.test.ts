@@ -139,6 +139,19 @@ describe("templates command", () => {
     });
   });
 
+  it("fills empty descriptions and names from the file stem", async () => {
+    const instance = await prepared();
+    const { mkdirSync: mkdir, writeFileSync: write } = await import("node:fs");
+    mkdir(join(instance.configDir, "templates"), { recursive: true });
+    write(join(instance.configDir, "templates", "minimal.md"), "---\nmodel: pro\n---\nBody.");
+
+    const ctx = context(false, instance.env);
+    await runCli(["templates", "--json"], ctx);
+    expect(stdoutJson<Array<{ name: string; description: string; model: string }>>(ctx)).toEqual([
+      { name: "minimal", description: "", model: "pro", profile: "", cwd: "" },
+    ]);
+  });
+
   it("renders a tty table and tolerates an empty templates dir", async () => {
     const instance = await prepared();
     const empty = context(true, instance.env);
@@ -169,7 +182,8 @@ describe("run with templates", () => {
 
     const conversationId = stdoutJson<{ conversationId: string }>(ctx).conversationId;
     const inbound = String(readTranscript(instance, conversationId)[0]?.content);
-    expect(inbound.startsWith("You are a dedicated browser QA verifier.")).toBe(true);
+    expect(inbound).toContain('<ag-cli cwd="/tmp/verify">');
+    expect(inbound).toContain("You are a dedicated browser QA verifier.");
     expect(inbound).toContain("Verify login flow on http://localhost:3000");
   });
 

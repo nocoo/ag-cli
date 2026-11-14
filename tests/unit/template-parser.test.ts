@@ -44,14 +44,57 @@ describe("parseTemplate", () => {
     expect(parsed).toEqual({ preamble: "Just a preamble.\nNo frontmatter here." });
   });
 
-  it("ignores unknown and malformed frontmatter keys", () => {
-    const parsed = parseTemplate("---\nmodel: pro\nunknown-key: junk\nbroken-line\n---\nBody.");
+  it("ignores unknown frontmatter keys", () => {
+    const parsed = parseTemplate("---\nmodel: pro\nunknown-key: junk\n---\nBody.");
     expect(parsed).toEqual({ model: "pro", preamble: "Body." });
   });
 
-  it("ignores frontmatter keys with empty values", () => {
-    const parsed = parseTemplate("---\nmodel:\nprofile:   \n---\nBody.");
-    expect(parsed).toEqual({ preamble: "Body." });
+  it("rejects malformed frontmatter lines", () => {
+    expect(() => parseTemplate("---\nmodel: pro\nbroken-line\n---\nBody.")).toThrow();
+  });
+
+  it("rejects frontmatter keys with empty values", () => {
+    expect(() => parseTemplate("---\nmodel:\n---\nBody.")).toThrow();
+  });
+
+  it("parses crlf frontmatter, quoted values, inline comments and block scalars", () => {
+    const parsed = parseTemplate(
+      [
+        "---",
+        'name: "browser-verifier"',
+        "description: |",
+        "  first line",
+        "  second line",
+        "model: pro # inline comment",
+        "---",
+        "Body.",
+      ].join("\r\n"),
+    );
+    expect(parsed).toEqual({
+      name: "browser-verifier",
+      description: "first line\nsecond line",
+      model: "pro",
+      preamble: "Body.",
+    });
+  });
+
+  it("parses single-quoted values with escaped apostrophes", () => {
+    const parsed = parseTemplate(
+      "---\nname: 'it''s a name'\ndescription: \"it's quoted\"\n---\nBody.",
+    );
+    expect(parsed).toEqual({ name: "it's a name", description: "it's quoted", preamble: "Body." });
+  });
+
+  it("rejects non-string values for known fields", () => {
+    expect(() => parseTemplate("---\nmodel: 42\n---\nBody.")).toThrow();
+    expect(() => parseTemplate("---\nprofile: true\n---\nBody.")).toThrow();
+  });
+
+  it("rejects template names that could escape the templates dir", () => {
+    const instance = sandbox();
+    for (const bad of ["../../outside", "nested/name", "a\b"]) {
+      expect(() => templatePath(instance.configDir, bad)).toThrow();
+    }
   });
 });
 

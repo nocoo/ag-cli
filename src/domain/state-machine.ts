@@ -1,5 +1,5 @@
 import type { ConversationStatus } from "../types/protocol";
-import { hasPendingToolCalls, maxStepIndex, type TranscriptStep } from "./transcript-parser";
+import { hasPendingToolCalls, type TranscriptStep } from "./transcript-parser";
 
 export interface StateFacts {
   summary?: {
@@ -10,6 +10,7 @@ export interface StateFacts {
   terminated?: number;
   watermarkStep: number;
   steps: TranscriptStep[];
+  awaitingArtifactFeedback?: boolean;
 }
 
 const INBOUND_TYPES = new Set(["USER_INPUT", "SYSTEM_MESSAGE"]);
@@ -36,70 +37,129 @@ function latestErrorWithoutRecovery(steps: TranscriptStep[]): boolean {
   return true;
 }
 
-function isBlocked(steps: TranscriptStep[]): boolean {
-  const last = steps.at(-1);
-  if (last === undefined) {
-    return false;
+function latestInboundIndex(steps: TranscriptStep[]): number {
+  let index = -1;
+  for (let position = 0; position < steps.length; position += 1) {
+    const step = steps[position];
+    if (step !== undefined && INBOUND_TYPES.has(step.type ?? "")) {
+      index = position;
+    }
   }
-  if (last.status === "WAITING") {
-    return true;
-  }
-  return (last.tool_calls ?? []).some((toolCall) => toolCall.name === "ask_question");
+  return index;
 }
 
-function hasStableReplyAfterLastInbound(steps: TranscriptStep[]): boolean {
-  let lastInboundPosition = -1;
-  for (let index = 0; index < steps.length; index += 1) {
-    if (INBOUND_TYPES.has(steps[index]?.type ?? "")) {
-      lastInboundPosition = index;
+function currentTurnSteps(steps: TranscriptStep[]): TranscriptStep[] {
+  const inbound = latestInboundIndex(steps);
+  return inbound === -1 ? [...steps] : steps.slice(inbound);
+}
+
+function hasUnansweredQuestion(step: TranscriptStep): boolean {
+  return (step.tool_calls ?? []).some(
+    (toolCall) => toolCall.name === "ask_question" && toolCall.status !== "DONE",
+  );
+}
+
+function isBlockedTurn(steps: TranscriptStep[], awaitingArtifactFeedback: boolean): boolean {
+  if (awaitingArtifactFeedback) {
+    return true;
+  }
+  return currentTurnSteps(steps).some(
+    (step) => step.status === "WAITING" || hasUnansweredQuestion(step),
+  );
+}
+
+function inboundAtOrAfter(
+  steps: TranscriptStep[],
+  watermarkStep: number,
+): TranscriptStep | undefined {
+  let found: TranscriptStep | undefined;
+  for (const step of steps) {
+    if (INBOUND_TYPES.has(step.type ?? "") && step.step_index >= watermarkStep) {
+      found = step;
     }
   }
-  if (lastInboundPosition === -1) {
-    return false;
+  return found;
+}
+
+function stableReplyAfter(
+  steps: TranscriptStep[],
+  inbound: TranscriptStep,
+): TranscriptStep | undefined {
+  let reply: TranscriptStep | undefined;
+  for (const step of steps) {
+    if (step.step_index <= inbound.step_index) {
+      continue;
+    }
+    if (step.type === "PLANNER_RESPONSE" && step.status === "DONE" && !hasPendingToolCalls(step)) {
+      reply = step;
+    }
   }
-  for (let index = lastInboundPosition + 1; index < steps.length; index += 1) {
-    const step = steps[index];
-    if (
-      step !== undefined &&
-      step.type === "PLANNER_RESPONSE" &&
-      step.status === "DONE" &&
-      !hasPendingToolCalls(step)
-    ) {
+  return reply;
+}
+
+function unfinishedWorkAfter(steps: TranscriptStep[], reply: TranscriptStep): boolean {
+  return steps.some((step) => {
+    if (step.step_index <= reply.step_index) {
+      return false;
+    }
+    if (step.status === "RUNNING") {
       return true;
     }
-  }
-  return false;
+    return hasPendingToolCalls(step);
+  });
 }
 
 export function deriveConversationStatus(facts: StateFacts): ConversationStatus {
   const { summary, terminated, watermarkStep, steps } = facts;
-  const last = steps.at(-1);
 
   if (summary?.killed === 1 || terminated === 1 || latestErrorWithoutRecovery(steps)) {
     return "error";
   }
 
-  if (isBlocked(steps)) {
+  if (isBlockedTurn(steps, facts.awaitingArtifactFeedback === true)) {
     return "blocked";
   }
 
+  const last = steps.at(-1);
   if (
     summary?.status === "CASCADE_RUN_STATUS_RUNNING" ||
     summary?.not_fully_idle === 1 ||
-    last?.status === "RUNNING" ||
-    maxStepIndex(steps) < watermarkStep
+    last?.status === "RUNNING"
   ) {
     return "working";
+  }
+
+  if (watermarkStep >= 0) {
+    const inbound = inboundAtOrAfter(steps, watermarkStep);
+    if (inbound === undefined) {
+      return "working";
+    }
+    const reply = stableReplyAfter(steps, inbound);
+    if (reply === undefined) {
+      return "working";
+    }
+    if (unfinishedWorkAfter(steps, reply)) {
+      return "working";
+    }
+    if (summary === undefined || summary.status !== "CASCADE_RUN_STATUS_IDLE") {
+      return summary === undefined ? "idle" : "working";
+    }
+    return "done";
   }
 
   if (
     summary !== undefined &&
     summary.status === "CASCADE_RUN_STATUS_IDLE" &&
-    summary.not_fully_idle === 0 &&
-    maxStepIndex(steps) >= watermarkStep &&
-    hasStableReplyAfterLastInbound(steps)
+    summary.not_fully_idle === 0
   ) {
-    return "done";
+    const inbound = latestInboundIndex(steps);
+    if (inbound !== -1) {
+      const inboundStep = steps[inbound] as TranscriptStep;
+      const reply = stableReplyAfter(steps, inboundStep);
+      if (reply !== undefined && !unfinishedWorkAfter(steps, reply)) {
+        return "done";
+      }
+    }
   }
 
   return "idle";

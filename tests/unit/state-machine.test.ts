@@ -227,3 +227,117 @@ describe("priority 5: idle (docs/03 §2)", () => {
     expect(deriveConversationStatus(facts({ summary: IDLE, watermarkStep: 0 }))).toBe("working");
   });
 });
+
+describe("watermark delivery semantics (review P1-3)", () => {
+  const IDLE_SUMMARY = { status: "CASCADE_RUN_STATUS_IDLE", not_fully_idle: 0, killed: 0 };
+
+  it("keeps working when no inbound step reached the watermark", () => {
+    const steps = [
+      step({ step_index: 0, type: "USER_INPUT" }),
+      step({ step_index: 2, type: "PLANNER_RESPONSE", status: "DONE" }),
+      step({ step_index: 3, type: "GENERIC", status: "DONE" }),
+    ];
+    expect(
+      deriveConversationStatus(facts({ summary: IDLE_SUMMARY, steps, watermarkStep: 3 })),
+    ).toBe("working");
+  });
+
+  it("derives idle when the watermark turn has no summaries row", () => {
+    const steps = [
+      step({ step_index: 3, type: "USER_INPUT" }),
+      step({ step_index: 4, type: "PLANNER_RESPONSE", status: "DONE" }),
+    ];
+    expect(deriveConversationStatus(facts({ steps, watermarkStep: 3 }))).toBe("idle");
+  });
+
+  it("derives done when the watermark inbound is followed by a stable reply", () => {
+    const steps = [
+      step({ step_index: 0, type: "USER_INPUT" }),
+      step({ step_index: 3, type: "USER_INPUT" }),
+      step({ step_index: 4, type: "PLANNER_RESPONSE", status: "DONE", content: "second" }),
+    ];
+    expect(
+      deriveConversationStatus(facts({ summary: IDLE_SUMMARY, steps, watermarkStep: 3 })),
+    ).toBe("done");
+  });
+
+  it("keeps working when the watermark inbound has no stable reply yet", () => {
+    const steps = [
+      step({ step_index: 3, type: "USER_INPUT" }),
+      step({ step_index: 4, type: "GENERIC", status: "DONE" }),
+    ];
+    expect(
+      deriveConversationStatus(facts({ summary: IDLE_SUMMARY, steps, watermarkStep: 3 })),
+    ).toBe("working");
+  });
+
+  it("keeps working when work continues after the reply", () => {
+    const steps = [
+      step({ step_index: 3, type: "USER_INPUT" }),
+      step({ step_index: 4, type: "PLANNER_RESPONSE", status: "DONE" }),
+      step({ step_index: 5, type: "GENERIC", status: "RUNNING" }),
+    ];
+    expect(
+      deriveConversationStatus(facts({ summary: IDLE_SUMMARY, steps, watermarkStep: 3 })),
+    ).toBe("working");
+  });
+
+  it("keeps working when a later step is waiting", () => {
+    const steps = [
+      step({ step_index: 3, type: "USER_INPUT" }),
+      step({ step_index: 4, type: "PLANNER_RESPONSE", status: "DONE" }),
+      step({ step_index: 5, type: "GENERIC", status: "WAITING" }),
+    ];
+    expect(
+      deriveConversationStatus(facts({ summary: IDLE_SUMMARY, steps, watermarkStep: 3 })),
+    ).toBe("blocked");
+  });
+
+  it("keeps working when a later step still has unresolved tool calls", () => {
+    const steps = [
+      step({ step_index: 3, type: "USER_INPUT" }),
+      step({ step_index: 4, type: "PLANNER_RESPONSE", status: "DONE" }),
+      step({
+        step_index: 5,
+        type: "GENERIC",
+        status: "DONE",
+        tool_calls: [{ name: "run", status: "RUNNING" }],
+      }),
+    ];
+    expect(
+      deriveConversationStatus(facts({ summary: IDLE_SUMMARY, steps, watermarkStep: 3 })),
+    ).toBe("working");
+  });
+});
+
+describe("blocked detection scans the whole current turn (review P2-14)", () => {
+  it("stays blocked when an earlier ask_question is unanswered", () => {
+    const steps = [
+      step({ step_index: 0, type: "USER_INPUT" }),
+      step({
+        step_index: 1,
+        type: "GENERIC",
+        status: "DONE",
+        tool_calls: [{ name: "ask_question", status: "WAITING" }],
+      }),
+      step({ step_index: 2, type: "GENERIC", status: "DONE" }),
+    ];
+    expect(deriveConversationStatus(facts({ summary: RUNNING, steps }))).toBe("blocked");
+  });
+
+  it("stays blocked when a later step is waiting inside the current turn", () => {
+    const steps = [
+      step({ step_index: 0, type: "USER_INPUT" }),
+      step({ step_index: 1, type: "GENERIC", status: "DONE" }),
+      step({ step_index: 2, type: "GENERIC", status: "WAITING" }),
+    ];
+    expect(deriveConversationStatus(facts({ summary: RUNNING, steps }))).toBe("blocked");
+  });
+
+  it("derives blocked while awaiting artifact feedback", () => {
+    const steps = [step({ step_index: 0, type: "USER_INPUT" })];
+    expect(
+      deriveConversationStatus(facts({ summary: RUNNING, steps, awaitingArtifactFeedback: true })),
+    ).toBe("blocked");
+  });
+});

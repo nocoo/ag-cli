@@ -1,9 +1,8 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { assertAlias, assertUuid } from "../domain/validation";
 import { AgCliError } from "../types/protocol";
-
-export const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
 export interface ManagedRow {
   shortId: number;
@@ -112,10 +111,9 @@ export class StateStore {
   }
 
   registerConversation(conversationId: string, options: RegisterOptions): ManagedRow {
-    if (options.name !== undefined && !NAME_RE.test(options.name)) {
-      throw new AgCliError("invalid_usage", `invalid name ${options.name}`, {
-        hint: "Names match ^[a-z0-9][a-z0-9_-]{0,31}$.",
-      });
+    assertUuid(conversationId);
+    if (options.name !== undefined) {
+      assertAlias(options.name);
     }
     if (options.name !== undefined) {
       const holder = this.db
@@ -189,27 +187,36 @@ export class StateStore {
     if (this.findByConversationId(conversationId) === undefined) {
       throw new AgCliError("not_found", `conversation ${conversationId} is not managed by ag-cli`);
     }
-    for (const pair of pairs) {
+    const parsed = pairs.map((pair) => {
       const separator = pair.indexOf("=");
       if (separator < 1) {
         throw new AgCliError("invalid_usage", `invalid label ${pair}`, {
           hint: "Use key=value or key= to remove.",
         });
       }
-      const key = pair.slice(0, separator);
-      const value = pair.slice(separator + 1);
-      if (value.length === 0) {
-        this.db
-          .prepare("DELETE FROM labels WHERE conversation_id = ? AND key = ?")
-          .run(conversationId, key);
-      } else {
-        this.db
-          .prepare(
-            "INSERT INTO labels (conversation_id, key, value) VALUES (?, ?, ?)" +
-              " ON CONFLICT(conversation_id, key) DO UPDATE SET value = excluded.value",
-          )
-          .run(conversationId, key, value);
+      return { key: pair.slice(0, separator), value: pair.slice(separator + 1) };
+    });
+
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      for (const entry of parsed) {
+        if (entry.value.length === 0) {
+          this.db
+            .prepare("DELETE FROM labels WHERE conversation_id = ? AND key = ?")
+            .run(conversationId, entry.key);
+        } else {
+          this.db
+            .prepare(
+              "INSERT INTO labels (conversation_id, key, value) VALUES (?, ?, ?)" +
+                " ON CONFLICT(conversation_id, key) DO UPDATE SET value = excluded.value",
+            )
+            .run(conversationId, entry.key, entry.value);
+        }
       }
+      this.db.exec("COMMIT;");
+    } catch (error) {
+      this.db.exec("ROLLBACK;");
+      throw error;
     }
   }
 

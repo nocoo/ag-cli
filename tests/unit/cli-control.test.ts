@@ -150,7 +150,7 @@ describe("run command", () => {
     const inbound = String(steps[0]?.content ?? "");
     expect(inbound).toContain('<ag-cli from="c1 ');
     expect(inbound).toContain(
-      'reach="ag-cli send c1 \\"<summary or artifact path>\\" when done or blocked"',
+      `reach="ag-cli send ${parentId} \\"<summary or artifact path>\\" when done or blocked"`,
     );
     expect(inbound).toContain("child task");
     expect(inbound.endsWith("</ag-cli>")).toBe(true);
@@ -161,12 +161,15 @@ describe("run command", () => {
     const plain = context(false, { ...instance.env, HC_TERMINAL_ID: "t7" });
     await runCli(["run", "--bg", "--json", "--no-notify", "quiet task"], plain);
     const quietId = stdoutJson<{ conversationId: string }>(plain).conversationId;
-    expect(readTranscript(instance, quietId)[0]?.content).toBe("quiet task");
+    const quiet = String(readTranscript(instance, quietId)[0]?.content);
+    expect(quiet).toContain("<ag-cli cwd=");
+    expect(quiet).toContain("quiet task");
+    expect(quiet).not.toContain("reach=");
 
     const wrapped = context(false, { ...instance.env, HC_TERMINAL_ID: "t9" });
     await runCli(["run", "--bg", "--json", "loud task"], wrapped);
     const loudId = stdoutJson<{ conversationId: string }>(wrapped).conversationId;
-    const content = readTranscript(instance, loudId)[0]?.content ?? "";
+    const content = String(readTranscript(instance, loudId)[0]?.content ?? "");
     expect(content).toContain('<ag-cli from="hc:t9"');
     expect(content).toContain('reach="hc send t9');
   });
@@ -203,7 +206,7 @@ describe("run command", () => {
 
     const steps = readTranscript(instance, conversationId);
     expect(steps).toHaveLength(6);
-    expect((steps[3] as { content?: string })?.content).toBe("second");
+    expect(String((steps[3] as { content?: string })?.content)).toContain("second");
   });
 
   it("fills reuse summaries from current flags for sparsely registered rows", async () => {
@@ -479,7 +482,7 @@ describe("send command", () => {
     expect(code).toBe(0);
     const steps = readTranscript(instance, conversationId);
     expect(String(steps[3]?.content)).toContain('<ag-cli from="c1 ');
-    expect(String(steps[3]?.content)).toContain('reach="ag-cli send c1');
+    expect(String(steps[3]?.content)).toContain(`reach="ag-cli send ${conversationId}`);
 
     const orphanCaller = context(false, {
       ...instance.env,
@@ -487,7 +490,9 @@ describe("send command", () => {
     });
     expect(await runCli(["send", "c1", "plain reply"], orphanCaller)).toBe(0);
     const wrapped = readTranscript(instance, conversationId).at(-1);
-    expect(String(wrapped?.content)).toContain('<ag-cli from="3e3e3e3e"');
+    expect(String(wrapped?.content)).toContain(
+      '<ag-cli from="3e3e3e3e-3e3e-43e3-83e3-3e3e3e3e3e3e"',
+    );
   });
 
   it("rejects invalid --if values and renders text receipts on a tty", async () => {

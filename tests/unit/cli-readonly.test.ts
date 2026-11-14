@@ -340,6 +340,29 @@ describe("state-backed conversations", () => {
     });
   });
 
+  it("renders tty headers with short ids and names for managed conversations", async () => {
+    const instance = sandbox();
+    const conversationId = await prepareConversation(instance);
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    store.registerConversation(conversationId, { name: "tty-worker" });
+    store.close();
+
+    const ctx = context(true, instance.env);
+    const code = await runCli(["read", "tty-worker"], ctx);
+    expect(code).toBe(0);
+    expect(stdoutText(ctx)).toContain("# c1 (tty-worker)");
+  });
+
+  it("surfaces generic runtime errors as exit 1", async () => {
+    const instance = sandbox();
+    writeFileSync(instance.summariesDbPath, "definitely not sqlite");
+
+    const ctx = context(false, instance.env);
+    const code = await runCli(["ls"], ctx);
+    expect(code).toBe(1);
+    expect(JSON.parse(stderrText(ctx))).toMatchObject({ error: { kind: "runtime_error" } });
+  });
+
   it("reports managed counts in status", async () => {
     const instance = sandbox();
     const conversationId = await prepareConversation(instance);
@@ -934,7 +957,16 @@ describe("read command", () => {
         status: "DONE",
         tool_calls: [{ status: "RUNNING" }, { name: "silent" }],
       },
+      {
+        step_index: 5,
+        type: "GENERIC",
+        status: "DONE",
+        thinking: "with tools",
+        tool_calls: [{ name: "grep", status: "DONE" }],
+      },
       { step_index: 4, type: "PLANNER_RESPONSE", status: "DONE", content: "final" },
+      { step_index: 6, type: "SYSTEM_MESSAGE", status: "DONE" },
+      { step_index: 7, status: "DONE", content: "typeless body" },
     ];
     writeFileSync(
       join(logs, "transcript.jsonl"),
@@ -953,7 +985,11 @@ describe("read command", () => {
       "[think] plain body",
       "[tool]  (RUNNING)",
       "[tool] silent",
+      "[think] with tools",
+      "[tool] grep (DONE)",
       "[reply] final",
+      "[system] SYSTEM_MESSAGE",
+      "[think] typeless body",
     ]);
   });
 

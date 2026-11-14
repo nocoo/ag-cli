@@ -131,7 +131,8 @@ describe("full user journeys against the built cli from an unrelated cwd", () =>
 
     const read = await runCli(["read", "ui-check"]);
     expect(read.status).toBe(0);
-    expect(read.stdout).toContain("Mock reply for: You are a dedicated browser QA verifier.");
+    expect(read.stdout).toContain("Mock reply for: <ag-cli cwd=");
+    expect(read.stdout).toContain("You are a dedicated browser QA verifier.");
     expect(read.stdout).toContain("Verify login flow on http://localhost:3000");
   });
 
