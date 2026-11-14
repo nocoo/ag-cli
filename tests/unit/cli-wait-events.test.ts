@@ -530,14 +530,53 @@ describe("wait command", () => {
     store.close();
     registerOwner(instance, parent);
 
-    const before = process.getActiveResourcesInfo().filter((key) => key === "FSEventWrap").length;
+    const handles = (): Record<string, number> =>
+      process.getActiveResourcesInfo().reduce<Record<string, number>>((map, key) => {
+        map[key] = (map[key] ?? 0) + 1;
+        return map;
+      }, {});
+    const before = handles();
     const ctx = context(false, { ...instance.env, AG_CLI_CALLER_ID: parent });
     const code = await runCli(["wait", "--children", "any", "--timeout", "5", "--json"], ctx);
     expect(code).toBe(1);
     expect(JSON.parse(stderrText(ctx))).toMatchObject({ error: { kind: "runtime_error" } });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const after = process.getActiveResourcesInfo().filter((key) => key === "FSEventWrap").length;
-    expect(after - before).toBeLessThanOrEqual(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const after = handles();
+    expect((after.FSEventWrap ?? 0) - (before.FSEventWrap ?? 0)).toBeLessThanOrEqual(0);
+    expect((after.Timeout ?? 0) - (before.Timeout ?? 0)).toBeLessThanOrEqual(0);
+  }, 10_000);
+
+  it("rejects events startup when the transcript path is unreadable without leaking watchers (review R3 F6)", async () => {
+    const instance = sandbox();
+    const conversationId = await preparedWorker(instance);
+    rmSync(join(logsDir(instance, conversationId), "transcript.jsonl"), { force: true });
+    mkdirSync(join(logsDir(instance, conversationId), "transcript.jsonl"));
+    const store = StateStore.open(resolvePaths(instance.env).stateDbPath, { create: true });
+    store.registerConversation(conversationId, { name: "dir-transcript" });
+    store.close();
+
+    const handles = (): Record<string, number> =>
+      process.getActiveResourcesInfo().reduce<Record<string, number>>((map, key) => {
+        map[key] = (map[key] ?? 0) + 1;
+        return map;
+      }, {});
+    const before = handles();
+    const { runEventsCommand } = await import("../../src/cli/commands/events");
+    await expect(
+      runEventsCommand(
+        ["--target", "dir-transcript", "--heartbeat-ms", "20", "--discovery-ms", "20"],
+        {
+          stdout: { isTTY: false, write: () => true },
+          env: instance.env,
+        },
+      ),
+    ).rejects.toThrow();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const after = handles();
+    expect((after.FSEventWrap ?? 0) - (before.FSEventWrap ?? 0)).toBeLessThanOrEqual(0);
+    expect((after.Timeout ?? 0) - (before.Timeout ?? 0)).toBeLessThanOrEqual(0);
   }, 10_000);
 
   it("fills decided child targets from real observations (review F10)", async () => {

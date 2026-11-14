@@ -274,15 +274,14 @@ async function waitForChildren(options: {
           guarded(tick);
         },
       });
+      watchers.set(conversationId, watcher);
       watcher.start();
       watcher.readNewSteps();
-      watchers.set(conversationId, watcher);
     }
   } catch (error) {
     fail(error);
     return promise;
   }
-
   const observe = (conversationId: string) =>
     observeConversation(
       options.paths,

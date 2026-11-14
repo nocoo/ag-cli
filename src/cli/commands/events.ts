@@ -225,6 +225,7 @@ export async function runEventsCommand(
           });
         },
       });
+      watchers.set(conversationId, watch);
       watch.start();
       const primed = watch.readNewSteps();
       entry.watcherGeneration = watch.generation;
@@ -234,7 +235,6 @@ export async function runEventsCommand(
       entry.artifacts = new Set(
         listBrainArtifacts(paths.brainDir, conversationId).map((artifact) => artifact.name),
       );
-      watchers.set(conversationId, watch);
       if (announce) {
         emit({
           type: "created",
