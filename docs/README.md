@@ -1,8 +1,8 @@
-# `ag-cli`（Team-Gravity）· 文档索引
+# `ag-cli` · 文档索引
 
 > 遵循 `dev-standard-numbered-docs` 编号文档规范：文件名采用 `NN-title.md`，编号严格递增排序；`docs/README.md` 为所有架构与设计子文档的唯一入口。
 
-**`ag-cli`**（仓库 `team-gravity`）是面向本机 Antigravity 运行环境的轻量级 CLI Runtime Wrapper，协议设计与代理编排心智全面对齐 [`herdr-core` (`hc`)](file:///Users/nocoo/workspace/references/herdr-core/README.md)，让任意外部 CLI Bot（如 `pi`、Claude Code、Codex）与内部 Antigravity 会话都能够以标准命令行和结构化 JSON 协议向本机 Antigravity 派发任务、双向通信、事件驱动等待并回收结果与产物。
+**`ag-cli`** 是面向本机 Antigravity 运行环境的轻量级 CLI Runtime Wrapper，协议设计与代理编排心智全面对齐 [`herdr-core` (`hc`)](file:///Users/nocoo/workspace/references/herdr-core/README.md)，让任意外部 CLI Bot（如 `pi`、Claude Code、Codex）与内部 Antigravity 会话都能够以标准命令行和结构化 JSON 协议向本机 Antigravity 派发任务、双向通信、事件驱动等待并回收结果与产物。
 
 ---
 

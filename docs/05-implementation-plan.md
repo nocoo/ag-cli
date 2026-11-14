@@ -11,7 +11,7 @@
 遵循“核心决策逻辑与 I/O 分离”、“高内聚单文件控制在 ~32 KB 以内”的工程规范；且 SQLite 与 HTTP 统一使用 Node/Bun 原生内置的 `import { DatabaseSync } from "node:sqlite"` 与 `node:http`，确保 `vitest run --coverage`（Node 运行时）与 `bun`（Bun 运行时）零原生插件 ABI 差异、开箱即跑：
 
 ```text
-team-gravity/
+ag-cli/
 ├── .github/
 │   └── workflows/
 │       └── ci.yml                       # 调用 nocoo/base-ci/.github/workflows/quality.yml@777bbe4...

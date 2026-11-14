@@ -1,6 +1,6 @@
 # AGENTS.md
 
-`ag-cli` (repo `team-gravity`) is a CLI runtime wrapper around the local
+`ag-cli` is a CLI runtime wrapper around the local
 Antigravity installation: external CLI bots and Antigravity conversations
 dispatch tasks, wait on events, and collect structured results.
 

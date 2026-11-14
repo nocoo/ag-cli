@@ -8,7 +8,7 @@
 
 ## 1. 一句话定义与项目定位
 
-**`ag-cli`**（仓库 `team-gravity`）是本机 Antigravity 的轻量级 **CLI Runtime Wrapper**（对标 [`herdr-core` (`hc`)](file:///Users/nocoo/workspace/references/herdr-core/README.md)）。
+**`ag-cli`** 是本机 Antigravity 的轻量级 **CLI Runtime Wrapper**（对标 [`herdr-core` (`hc`)](file:///Users/nocoo/workspace/references/herdr-core/README.md)）。
 
 `hc` 让编码代理在持久终端中启动、管理、交互并回收其他 CLI 程序；`ag-cli` 则在同样的交互哲学与协议风格下，让任意外部或内部 Agent（`pi`、Claude Code、Codex、Antigravity 主控会话、本地自动化脚本）能够通过标准命令行向本机 Antigravity **分派任务（Conversation）、注入指令、事件驱动等待、提取结构化结果与产物**。
 

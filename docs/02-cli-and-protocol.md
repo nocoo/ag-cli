@@ -58,7 +58,7 @@ Agent? Run: ag-cli --skill
 | 候选名称 | NPM 注册表状态 | 本机 `PATH` 占用 | 说明 |
 | --- | --- | --- | --- |
 | `ag-cli` | **可用（HTTP 404）** | 无冲突 | Antigravity CLI 语义最直观，包名与命令名完全一致 |
-| `team-gravity` / `@nocoo/team-gravity` | **可用（HTTP 404）** | 无冲突 | 仓库名及备选 Scope 包名 |
+| `team-gravity` / `@nocoo/team-gravity` | **可用（HTTP 404）** | 无冲突 | 原暂定仓库名及备选 Scope 包名（现仓库已统一为 `ag-cli`） |
 | `tg` | **已被占用（HTTP 200）** | 无冲突 | NPM 包名已被第三方占坑 |
 | `antigravity-cli` | **已被占用（HTTP 200）** | — | NPM 包名已被占用 |
 
