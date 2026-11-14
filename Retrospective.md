@@ -38,3 +38,30 @@ python3 -c "import re; s=open('bun.lock').read(); open('bun.lock','w').write(re.
 ```
 
 `scripts/hooks/pre-commit` enforces the invariant (`rg -c '", "https' bun.lock` empty).
+
+## 2026-11-14 · `return promise` inside try/finally closes resources early (Phase 2.3)
+
+**Symptom**: sync `run` (no `--bg`) hung forever; the wait engine's interval tick then
+crashed with `database is not open` because the reader was closed while the wait promise
+was still pending.
+
+**Root cause**: `try { return finishRun(...); } finally { reader.close(); }` — without
+`return await`, the async function returns the pending promise and the `finally` block
+runs immediately, closing the reader/store the promise still uses.
+
+**Prevention**: when a try block returns a promise that still consumes try-scoped
+resources, always `return await`. Rule applied in `src/cli/commands/run.ts`.
+
+## 2026-11-14 · Bun vs Node sqlite `readOnly` divergence on WAL databases (Phase 2.3)
+
+Bun's `new DatabaseSync(path, { readOnly: true })` opens fine but fails queries with
+`unable to open database file` when a WAL database has no live writer (no `-shm` file).
+Node's vitest runtime tolerated the same state, so tests passed while the bun runtime
+broke. Fix: `SummariesReader` now opens normally and enforces read-only with
+`PRAGMA query_only = ON` (engine-level, identical behavior on both runtimes).
+
+## 2026-11-14 · `run --name` conflicts must be checked before dispatch (Phase 2.3)
+
+Registering the name in `state.db` after `newConversation` meant a `name_conflict`
+throw left a freshly created Antigravity conversation unmanaged (orphan) that leaked
+into `ls`. Fix: `run.ts` pre-checks name availability before contacting the daemon.
