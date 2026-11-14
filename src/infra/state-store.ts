@@ -15,8 +15,15 @@ export interface ManagedRow {
   watermarkStep: number;
   lastTurn: number;
   terminated: number;
+  deliverySeq: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DeliveryTicket {
+  seq: number;
+  previousWatermark: number;
+  createdRow: boolean;
 }
 
 export interface RegisterOptions {
@@ -39,6 +46,7 @@ const SCHEMA = `
     watermark_step  INTEGER NOT NULL DEFAULT -1,
     last_turn       INTEGER NOT NULL DEFAULT 0,
     terminated      INTEGER NOT NULL DEFAULT 0,
+    delivery_seq    INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
   );
@@ -49,11 +57,23 @@ const SCHEMA = `
     PRIMARY KEY (conversation_id, key),
     FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id) ON DELETE CASCADE
   );
+  CREATE TABLE IF NOT EXISTS name_reservations (
+    name       TEXT PRIMARY KEY,
+    token      TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
   CREATE INDEX IF NOT EXISTS idx_conversations_parent ON conversations(parent_id);
   CREATE INDEX IF NOT EXISTS idx_labels_kv ON labels(key, value);
 `;
 
 type RawRow = Record<string, unknown>;
+
+function migrateDeliverySeq(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info(conversations)").all() as unknown as RawRow[];
+  if (!columns.some((column) => String(column.name) === "delivery_seq")) {
+    db.exec("ALTER TABLE conversations ADD COLUMN delivery_seq INTEGER NOT NULL DEFAULT 0;");
+  }
+}
 
 function toRow(raw: RawRow): ManagedRow {
   const text = (value: unknown): string | null => (typeof value === "string" ? value : null);
@@ -68,6 +88,7 @@ function toRow(raw: RawRow): ManagedRow {
     watermarkStep: Number(raw.watermark_step),
     lastTurn: Number(raw.last_turn),
     terminated: Number(raw.terminated),
+    deliverySeq: Number(raw.delivery_seq ?? 0),
     createdAt: String(raw.created_at),
     updatedAt: String(raw.updated_at),
   };
@@ -90,6 +111,7 @@ export class StateStore {
     db.exec("PRAGMA foreign_keys = ON;");
     db.exec("PRAGMA busy_timeout = 3000;");
     db.exec(SCHEMA);
+    migrateDeliverySeq(db);
     return new StateStore(db);
   }
 
@@ -103,6 +125,99 @@ export class StateStore {
 
   rawExec(sql: string, ...params: Array<string | number | null>): void {
     this.db.prepare(sql).run(...params);
+  }
+
+  beginDelivery(conversationId: string, watermarkStep: number): DeliveryTicket {
+    assertUuid(conversationId);
+    const now = this.now();
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      const existing = this.db
+        .prepare("SELECT watermark_step FROM conversations WHERE conversation_id = ?")
+        .get(conversationId) as RawRow | undefined;
+      const createdRow = existing === undefined;
+      const previousWatermark = createdRow ? -1 : Number(existing.watermark_step);
+      this.db
+        .prepare(
+          "INSERT INTO conversations (conversation_id, watermark_step, delivery_seq, created_at, updated_at)" +
+            " VALUES (?, ?, 1, ?, ?)" +
+            " ON CONFLICT(conversation_id) DO UPDATE SET" +
+            " watermark_step = MAX(watermark_step, excluded.watermark_step)," +
+            " delivery_seq = delivery_seq + 1," +
+            " updated_at = excluded.updated_at",
+        )
+        .run(conversationId, watermarkStep, now, now);
+      const row = this.db
+        .prepare("SELECT delivery_seq FROM conversations WHERE conversation_id = ?")
+        .get(conversationId) as RawRow;
+      this.db.exec("COMMIT;");
+      return { seq: Number(row.delivery_seq), previousWatermark, createdRow };
+    } catch (error) {
+      this.db.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  rollbackDelivery(conversationId: string, ticket: DeliveryTicket): boolean {
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      const row = this.db
+        .prepare("SELECT delivery_seq FROM conversations WHERE conversation_id = ?")
+        .get(conversationId) as RawRow | undefined;
+      if (row === undefined || Number(row.delivery_seq) !== ticket.seq) {
+        this.db.exec("COMMIT;");
+        return false;
+      }
+      if (
+        ticket.createdRow &&
+        ticket.seq === 1 &&
+        Number(
+          (
+            this.db
+              .prepare("SELECT COUNT(*) AS n FROM labels WHERE conversation_id = ?")
+              .get(conversationId) as RawRow
+          ).n,
+        ) === 0
+      ) {
+        this.db.prepare("DELETE FROM conversations WHERE conversation_id = ?").run(conversationId);
+      } else {
+        this.db
+          .prepare(
+            "UPDATE conversations SET watermark_step = ?, updated_at = ? WHERE conversation_id = ?",
+          )
+          .run(ticket.previousWatermark, this.now(), conversationId);
+      }
+      this.db.exec("COMMIT;");
+      return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  acquireNameReservation(name: string, token: string): boolean {
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      const holder = this.db
+        .prepare("SELECT token FROM name_reservations WHERE name = ?")
+        .get(name) as RawRow | undefined;
+      if (holder !== undefined) {
+        this.db.exec("COMMIT;");
+        return false;
+      }
+      this.db
+        .prepare("INSERT INTO name_reservations (name, token, created_at) VALUES (?, ?, ?)")
+        .run(name, token, this.now());
+      this.db.exec("COMMIT;");
+      return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  releaseNameReservation(name: string, token: string): void {
+    this.db.prepare("DELETE FROM name_reservations WHERE name = ? AND token = ?").run(name, token);
   }
 
   private now(): string {
@@ -212,6 +327,12 @@ export class StateStore {
             .run(conversationId, entry.key, entry.value);
         }
       }
+      this.db
+        .prepare(
+          "UPDATE conversations SET delivery_seq = delivery_seq + 1, updated_at = ?" +
+            " WHERE conversation_id = ?",
+        )
+        .run(this.now(), conversationId);
       this.db.exec("COMMIT;");
     } catch (error) {
       this.db.exec("ROLLBACK;");
@@ -258,7 +379,9 @@ export class StateStore {
 
   markTerminated(conversationId: string): void {
     this.db
-      .prepare("UPDATE conversations SET terminated = 1, updated_at = ? WHERE conversation_id = ?")
+      .prepare(
+        "UPDATE conversations SET terminated = 1, name = NULL, updated_at = ? WHERE conversation_id = ?",
+      )
       .run(this.now(), conversationId);
   }
 

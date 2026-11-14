@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -123,6 +123,50 @@ describe("parseTemplate", () => {
   });
 });
 
+describe("real yaml frontmatter parsing (review F17)", () => {
+  it("accepts quoted numeric strings as strings", () => {
+    expect(parseTemplate('---\nprofile: "42"\n---\nBody.')).toEqual({
+      profile: "42",
+      preamble: "Body.",
+    });
+  });
+
+  it("accepts strip block scalars", () => {
+    expect(parseTemplate("---\ndescription: |-\n  first\n  second\n---\nBody.")).toEqual({
+      description: "first\nsecond",
+      preamble: "Body.",
+    });
+  });
+
+  it("rejects unterminated quotes as invalid yaml", () => {
+    expect(() => parseTemplate('---\ndescription: "unterminated\n---\nBody.')).toThrow();
+  });
+
+  it("rejects non-string scalars for string fields", () => {
+    expect(() => parseTemplate("---\ncwd: [one, two]\n---\nBody.")).toThrow();
+    expect(() => parseTemplate("---\nmodel: 42\n---\nBody.")).toThrow();
+    expect(() => parseTemplate("---\nname: true\n---\nBody.")).toThrow();
+    expect(() => parseTemplate("---\nprofile: { a: b }\n---\nBody.")).toThrow();
+  });
+
+  it("accepts booleans for notify/raw and non-negative integers for timeout", () => {
+    expect(parseTemplate("---\nnotify: true\nraw: false\ntimeout: 300\n---\nBody.")).toMatchObject({
+      notify: true,
+      raw: false,
+      timeout: 300,
+      preamble: "Body.",
+    });
+  });
+
+  it("rejects invalid notify/raw/timeout values", () => {
+    expect(() => parseTemplate('---\nnotify: "yes"\n---\nB.')).toThrow();
+    expect(() => parseTemplate("---\nraw: 1\n---\nB.")).toThrow();
+    expect(() => parseTemplate("---\ntimeout: -1\n---\nB.")).toThrow();
+    expect(() => parseTemplate("---\ntimeout: 1.5\n---\nB.")).toThrow();
+    expect(() => parseTemplate('---\ntimeout: "180"\n---\nB.')).toThrow();
+  });
+});
+
 describe("loadTemplate", () => {
   it("reads a template from the config templates dir", () => {
     const instance = sandbox();
@@ -144,6 +188,24 @@ describe("loadTemplate", () => {
   it("returns an empty list when the templates directory does not exist", () => {
     const instance = sandbox();
     expect(listTemplates(join(instance.root, "missing-config"))).toEqual([]);
+  });
+
+  it("skips templates that escape the templates dir via symlink (review F9)", () => {
+    const instance = sandbox();
+    mkdirSync(join(instance.configDir, "templates"), { recursive: true });
+    writeFileSync(
+      join(instance.root, "outside.md"),
+      "---\ndescription: SYNTHETIC-OUTSIDE\n---\nbody",
+    );
+    symlinkSync(
+      join(instance.root, "outside.md"),
+      join(instance.configDir, "templates", "escape.md"),
+    );
+    writeFileSync(
+      join(instance.configDir, "templates", "safe.md"),
+      "---\ndescription: safe\n---\nbody",
+    );
+    expect(listTemplates(instance.configDir).map((entry) => entry.file)).toEqual(["safe"]);
   });
 
   it("fails with not_found for unknown templates", () => {

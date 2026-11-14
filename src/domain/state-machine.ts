@@ -63,9 +63,21 @@ function isBlockedTurn(steps: TranscriptStep[], awaitingArtifactFeedback: boolea
   if (awaitingArtifactFeedback) {
     return true;
   }
-  return currentTurnSteps(steps).some(
-    (step) => step.status === "WAITING" || hasUnansweredQuestion(step),
-  );
+  const turn = currentTurnSteps(steps);
+  let pendingIndex = -1;
+  for (let index = 0; index < turn.length; index += 1) {
+    const step = turn[index];
+    if (step === undefined) {
+      continue;
+    }
+    if (step.status === "WAITING" || hasUnansweredQuestion(step)) {
+      pendingIndex = index;
+    }
+  }
+  if (pendingIndex === -1) {
+    return false;
+  }
+  return !turn.slice(pendingIndex + 1).some((step) => step?.status === "DONE");
 }
 
 function inboundAtOrAfter(

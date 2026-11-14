@@ -75,7 +75,9 @@ export async function runControlCommand(
     }
     const brainTarget = join(paths.brainDir, conversationId);
     if (flags.flags.has("purge-brain") && existsSync(brainTarget)) {
-      assertInside(paths.brainDir, brainTarget, "Brain artifacts must stay inside the brain root.");
+      assertInside(paths.brainDir, brainTarget, {
+        hint: "Brain artifacts must stay inside the brain root.",
+      });
     }
     store.removeConversation(conversationId);
     let purgedBrain = false;

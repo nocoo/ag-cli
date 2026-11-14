@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { StateStore } from "../../src/infra/state-store";
 import type { AgCliError } from "../../src/types/protocol";
@@ -127,19 +128,19 @@ describe("registerConversation", () => {
     }
   });
 
-  it("conflicts include terminated conversations until rm frees the name", () => {
+  it("conflicts include conversations holding the name until termination or rm frees it (review F3)", () => {
     const instance = sandbox();
     const store = StateStore.open(statePath(instance), { create: true });
     try {
       store?.registerConversation("11111111-1111-4111-8111-111111111111", { name: "alpha" });
-      store?.markTerminated("11111111-1111-4111-8111-111111111111");
       try {
         store?.registerConversation("22222222-2222-4222-8222-222222222222", { name: "alpha" });
         expect.unreachable("must throw");
       } catch (error) {
         expect((error as AgCliError).kind).toBe("name_conflict");
       }
-      store?.removeConversation("11111111-1111-4111-8111-111111111111");
+      store?.markTerminated("11111111-1111-4111-8111-111111111111");
+      expect(store?.findByConversationId("11111111-1111-4111-8111-111111111111")?.name).toBeNull();
       expect(
         store?.registerConversation("22222222-2222-4222-8222-222222222222", { name: "alpha" })
           .shortId,
@@ -275,6 +276,175 @@ describe("queries and mutations", () => {
       ).toBeDefined();
     } finally {
       store?.close();
+    }
+  });
+});
+
+describe("delivery sequencing and rollback (review F2)", () => {
+  const first = "11111111-1111-4111-8111-111111111111";
+
+  it("beginDelivery inserts a missing row and reports createdRow with seq 1", () => {
+    const instance = sandbox();
+    const store = StateStore.open(statePath(instance), { create: true });
+    try {
+      const ticket = store.beginDelivery(first, 4);
+      expect(ticket).toEqual({ seq: 1, previousWatermark: -1, createdRow: true });
+      expect(store.findByConversationId(first)).toMatchObject({
+        watermarkStep: 4,
+        deliverySeq: 1,
+      });
+    } finally {
+      store.close();
+    }
+  });
+
+  it("beginDelivery increments seq and keeps the watermark max on updates", () => {
+    const instance = sandbox();
+    const store = StateStore.open(statePath(instance), { create: true });
+    try {
+      const a = store.beginDelivery(first, 4);
+      const b = store.beginDelivery(first, 2);
+      expect(b).toEqual({ seq: 2, previousWatermark: 4, createdRow: false });
+      expect(store.findByConversationId(first)).toMatchObject({
+        watermarkStep: 4,
+        deliverySeq: 2,
+      });
+      expect(a.seq).toBe(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("rollbackDelivery restores the watermark only when the seq still matches", () => {
+    const instance = sandbox();
+    const store = StateStore.open(statePath(instance), { create: true });
+    try {
+      const a = store.beginDelivery(first, 4);
+      const b = store.beginDelivery(first, 5);
+      // B fails first: its rollback applies (seq matches).
+      expect(store.rollbackDelivery(first, b)).toBe(true);
+      expect(store.findByConversationId(first)?.watermarkStep).toBe(4);
+      // A's rollback must NOT clobber B's outcome: seq moved past A.
+      expect(store.rollbackDelivery(first, a)).toBe(false);
+      expect(store.findByConversationId(first)?.watermarkStep).toBe(4);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("rollbackDelivery deletes the row only for the creating delivery with no labels", () => {
+    const instance = sandbox();
+    const store = StateStore.open(statePath(instance), { create: true });
+    try {
+      const a = store.beginDelivery(first, 4);
+      expect(store.rollbackDelivery(first, a)).toBe(true);
+      expect(store.findByConversationId(first)).toBeUndefined();
+
+      const b = store.beginDelivery(first, 1);
+      store.setLabels(first, ["keep=value"]);
+      expect(store.rollbackDelivery(first, b)).toBe(false);
+      expect(store.findByConversationId(first)).toBeDefined();
+      expect(store.listLabels(first)).toEqual([{ key: "keep", value: "value" }]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("setLabels increments delivery_seq so a stale rollback cannot delete a labeled row", () => {
+    const instance = sandbox();
+    const store = StateStore.open(statePath(instance), { create: true });
+    try {
+      const a = store.beginDelivery(first, 4);
+      const b = store.beginDelivery(first, 5);
+      store.setLabels(first, ["concurrent=keep"]);
+      expect(b.seq).toBe(2);
+      expect(store.rollbackDelivery(first, b)).toBe(false);
+      expect(store.rollbackDelivery(first, a)).toBe(false);
+      expect(store.findByConversationId(first)).toBeDefined();
+      expect(store.listLabels(first)).toEqual([{ key: "concurrent", value: "keep" }]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("migrates an existing state.db without delivery_seq (review F2)", () => {
+    const instance = sandbox();
+    const path = statePath(instance);
+    const legacy = new DatabaseSync(path);
+    legacy.exec(`
+      CREATE TABLE conversations (
+        short_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id TEXT NOT NULL UNIQUE,
+        name            TEXT UNIQUE,
+        parent_id       TEXT,
+        cwd             TEXT,
+        project_id      TEXT,
+        model           TEXT,
+        watermark_step  INTEGER NOT NULL DEFAULT -1,
+        last_turn       INTEGER NOT NULL DEFAULT 0,
+        terminated      INTEGER NOT NULL DEFAULT 0,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+      );
+      CREATE TABLE labels (
+        conversation_id TEXT NOT NULL,
+        key             TEXT NOT NULL,
+        value           TEXT NOT NULL,
+        PRIMARY KEY (conversation_id, key)
+      );
+    `);
+    legacy
+      .prepare(
+        "INSERT INTO conversations (conversation_id, name, watermark_step, created_at, updated_at) VALUES (?, ?, 7, ?, ?)",
+      )
+      .run(first, "legacy", "2026-11-14T00:00:00Z", "2026-11-14T00:00:00Z");
+    legacy.close();
+
+    const store = StateStore.open(path, { create: true });
+    try {
+      expect(store.findByConversationId(first)).toMatchObject({
+        name: "legacy",
+        watermarkStep: 7,
+        deliverySeq: 0,
+      });
+      const ticket = store.beginDelivery(first, 9);
+      expect(ticket).toEqual({ seq: 1, previousWatermark: 7, createdRow: false });
+    } finally {
+      store.close();
+    }
+  });
+});
+
+describe("name reservations (review F3)", () => {
+  it("acquireNameReservation is exclusive per name and token-scoped on release", () => {
+    const instance = sandbox();
+    const store = StateStore.open(statePath(instance), { create: true });
+    try {
+      expect(store.acquireNameReservation("worker", "token-a")).toBe(true);
+      expect(store.acquireNameReservation("worker", "token-b")).toBe(false);
+      expect(store.acquireNameReservation("other", "token-b")).toBe(true);
+      // releasing with a foreign token must not free the reservation
+      store.releaseNameReservation("worker", "token-b");
+      expect(store.acquireNameReservation("worker", "token-c")).toBe(false);
+      store.releaseNameReservation("worker", "token-a");
+      expect(store.acquireNameReservation("worker", "token-c")).toBe(true);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("reservations are independent of conversation names", () => {
+    const instance = sandbox();
+    const store = StateStore.open(statePath(instance), { create: true });
+    try {
+      store.registerConversation("11111111-1111-4111-8111-111111111111", { name: "worker" });
+      expect(store.acquireNameReservation("worker", "token-a")).toBe(true);
+      store.releaseNameReservation("worker", "token-a");
+      expect(store.findByConversationId("11111111-1111-4111-8111-111111111111")?.name).toBe(
+        "worker",
+      );
+    } finally {
+      store.close();
     }
   });
 });

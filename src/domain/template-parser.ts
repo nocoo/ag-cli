@@ -1,5 +1,7 @@
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { join, sep } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
+import { assertInside } from "../infra/path-safety";
 import { AgCliError } from "../types/protocol";
 
 export interface ParsedTemplate {
@@ -8,89 +10,16 @@ export interface ParsedTemplate {
   model?: string;
   profile?: string;
   cwd?: string;
+  notify?: boolean;
+  raw?: boolean;
+  timeout?: number;
   preamble: string;
 }
 
-const KNOWN_KEYS = new Set(["name", "description", "model", "profile", "cwd"]);
+const STRING_FIELDS = ["name", "description", "model", "profile", "cwd"] as const;
+const BOOLEAN_FIELDS = ["notify", "raw"] as const;
 const TEMPLATE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?([\s\S]*)$/;
-
-function stripInlineComment(value: string): string {
-  let inSingle = false;
-  let inDouble = false;
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index];
-    if (char === "'" && !inDouble) {
-      inSingle = !inSingle;
-    } else if (char === '"' && !inSingle) {
-      inDouble = !inDouble;
-    } else if (
-      char === "#" &&
-      !inSingle &&
-      !inDouble &&
-      (index === 0 || value[index - 1] === " ")
-    ) {
-      return value.slice(0, index).trimEnd();
-    }
-  }
-  return value.trimEnd();
-}
-
-function unquote(value: string): string {
-  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
-    return value
-      .slice(1, -1)
-      .replace(/\\n/g, "\n")
-      .replace(/\\t/g, "\t")
-      .replace(/\\"/g, '"')
-      .replace(/\\\\/g, "\\");
-  }
-  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
-    return value.slice(1, -1).replace(/''/g, "'");
-  }
-  return value;
-}
-
-function parseFrontmatter(raw: string): Record<string, string> {
-  const lines = raw.split(/\r?\n/);
-  const values: Record<string, string> = {};
-  let index = 0;
-  while (index < lines.length) {
-    const line = lines[index] as string;
-    index += 1;
-    if (line.trim().length === 0 || line.trimStart().startsWith("#")) {
-      continue;
-    }
-    const separator = line.indexOf(":");
-    if (separator < 1) {
-      throw new AgCliError("invalid_usage", `malformed template frontmatter line: ${line.trim()}`);
-    }
-    const key = line.slice(0, separator).trim();
-    const rawValue = line.slice(separator + 1).trim();
-    if (rawValue === "|" || rawValue === ">") {
-      const block: string[] = [];
-      while (index < lines.length) {
-        const next = lines[index] as string;
-        if (next.trim().length > 0 && !/^\s/.test(next)) {
-          break;
-        }
-        block.push(next.replace(/^\s{1,}/, ""));
-        index += 1;
-      }
-      while (block.length > 0 && block[block.length - 1]?.trim() === "") {
-        block.pop();
-      }
-      values[key] = rawValue === "|" ? block.join("\n") : block.join(" ");
-      continue;
-    }
-    const value = stripInlineComment(rawValue);
-    if (value.length === 0) {
-      throw new AgCliError("invalid_usage", `template frontmatter key ${key} has no value`);
-    }
-    values[key] = unquote(value);
-  }
-  return values;
-}
 
 export function parseTemplate(text: string): ParsedTemplate {
   const match = FRONTMATTER_RE.exec(text);
@@ -100,16 +29,40 @@ export function parseTemplate(text: string): ParsedTemplate {
     }
     return { preamble: text.trim() };
   }
-  const values = parseFrontmatter(match[1] as string);
+  let values: unknown;
+  try {
+    values = parseYaml(match[1] as string);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
+    throw new AgCliError("invalid_usage", `malformed template frontmatter: ${reason}`);
+  }
+  if (values === null || values === undefined) {
+    values = {};
+  }
+  if (typeof values !== "object" || Array.isArray(values)) {
+    throw new AgCliError("invalid_usage", "template frontmatter must be a mapping");
+  }
   const parsed: ParsedTemplate = { preamble: (match[2] as string).trim() };
-  for (const [key, value] of Object.entries(values)) {
-    if (!KNOWN_KEYS.has(key)) {
-      continue;
+  for (const [key, value] of Object.entries(values as Record<string, unknown>)) {
+    if ((STRING_FIELDS as readonly string[]).includes(key)) {
+      if (typeof value !== "string" || value.trim().length === 0) {
+        throw new AgCliError("invalid_usage", `template field ${key} must be a non-empty string`);
+      }
+      parsed[key as (typeof STRING_FIELDS)[number]] = value.replace(/\n+$/, "");
+    } else if ((BOOLEAN_FIELDS as readonly string[]).includes(key)) {
+      if (typeof value !== "boolean") {
+        throw new AgCliError("invalid_usage", `template field ${key} must be a boolean`);
+      }
+      parsed[key as (typeof BOOLEAN_FIELDS)[number]] = value;
+    } else if (key === "timeout") {
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+        throw new AgCliError(
+          "invalid_usage",
+          "template field timeout must be a non-negative integer",
+        );
+      }
+      parsed.timeout = value;
     }
-    if (value === "true" || value === "false" || /^\d+$/.test(value)) {
-      throw new AgCliError("invalid_usage", `template field ${key} must be a string`);
-    }
-    parsed[key as keyof Omit<ParsedTemplate, "preamble">] = value;
   }
   return parsed;
 }
@@ -128,16 +81,6 @@ export function templatePath(configDir: string, name: string): string {
   return join(configDir, "templates", `${name}.md`);
 }
 
-function assertInside(root: string, target: string): void {
-  const realRoot = realpathSync(root);
-  const realTarget = realpathSync(target);
-  if (realTarget !== realRoot && !realTarget.startsWith(`${realRoot}${sep}`)) {
-    throw new AgCliError("invalid_usage", `path ${target} escapes ${root}`, {
-      hint: "Templates must live inside the configured templates directory.",
-    });
-  }
-}
-
 export function loadTemplate(
   configDir: string,
   name: string,
@@ -148,7 +91,10 @@ export function loadTemplate(
       hint: "Run `ag-cli templates` to list installed templates.",
     });
   }
-  assertInside(join(configDir, "templates"), path);
+  assertInside(join(configDir, "templates"), path, {
+    mustExist: true,
+    hint: "Templates must live inside the configured templates directory.",
+  });
   return { path, template: parseTemplate(readFileSync(path, "utf8")) };
 }
 
@@ -162,8 +108,18 @@ export function listTemplates(
   return readdirSync(dir)
     .filter((entry) => entry.endsWith(".md"))
     .sort()
-    .map((file) => ({
-      file: file.replace(/\.md$/, ""),
-      template: parseTemplate(readFileSync(join(dir, file), "utf8")),
-    }));
+    .flatMap((file) => {
+      const path = join(dir, file);
+      try {
+        assertInside(dir, path, {
+          mustExist: true,
+          hint: "Templates must live inside the configured templates directory.",
+        });
+      } catch {
+        return [];
+      }
+      return [
+        { file: file.replace(/\.md$/, ""), template: parseTemplate(readFileSync(path, "utf8")) },
+      ];
+    });
 }

@@ -70,7 +70,9 @@ export async function runReadCommand(
       if (!existsSync(path)) {
         throw new AgCliError("not_found", `artifact ${name} not found in ${target.conversationId}`);
       }
-      assertInside(conversationDir, path, "Artifacts must stay inside the conversation brain dir.");
+      assertInside(conversationDir, path, {
+        hint: "Artifacts must stay inside the conversation brain dir.",
+      });
       context.stdout.write(readFileSync(path, "utf8"));
       return 0;
     }

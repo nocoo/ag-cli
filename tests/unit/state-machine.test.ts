@@ -311,7 +311,7 @@ describe("watermark delivery semantics (review P1-3)", () => {
 });
 
 describe("blocked detection scans the whole current turn (review P2-14)", () => {
-  it("stays blocked when an earlier ask_question is unanswered", () => {
+  it("resolves an earlier ask_question once a subsequent step in the turn is DONE (review F11)", () => {
     const steps = [
       step({ step_index: 0, type: "USER_INPUT" }),
       step({
@@ -322,7 +322,19 @@ describe("blocked detection scans the whole current turn (review P2-14)", () => 
       }),
       step({ step_index: 2, type: "GENERIC", status: "DONE" }),
     ];
-    expect(deriveConversationStatus(facts({ summary: RUNNING, steps }))).toBe("blocked");
+    expect(deriveConversationStatus(facts({ summary: RUNNING, steps }))).toBe("working");
+  });
+
+  it("resolves a mid-turn WAITING step once a later step in the same turn is DONE (review F11)", () => {
+    const steps = [
+      step({ step_index: 0, type: "USER_INPUT" }),
+      step({ step_index: 1, type: "GENERIC", status: "WAITING" }),
+      step({ step_index: 2, type: "GENERIC", status: "DONE" }),
+      step({ step_index: 3, type: "PLANNER_RESPONSE", status: "DONE", content: "ok" }),
+    ];
+    expect(deriveConversationStatus(facts({ summary: IDLE, steps, watermarkStep: 0 }))).toBe(
+      "done",
+    );
   });
 
   it("stays blocked when a later step is waiting inside the current turn", () => {
@@ -330,6 +342,19 @@ describe("blocked detection scans the whole current turn (review P2-14)", () => 
       step({ step_index: 0, type: "USER_INPUT" }),
       step({ step_index: 1, type: "GENERIC", status: "DONE" }),
       step({ step_index: 2, type: "GENERIC", status: "WAITING" }),
+    ];
+    expect(deriveConversationStatus(facts({ summary: RUNNING, steps }))).toBe("blocked");
+  });
+
+  it("stays blocked when a trailing ask_question never gets a subsequent DONE step", () => {
+    const steps = [
+      step({ step_index: 0, type: "USER_INPUT" }),
+      step({
+        step_index: 1,
+        type: "GENERIC",
+        status: "DONE",
+        tool_calls: [{ name: "ask_question", status: "WAITING" }],
+      }),
     ];
     expect(deriveConversationStatus(facts({ summary: RUNNING, steps }))).toBe("blocked");
   });

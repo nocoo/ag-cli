@@ -5,7 +5,6 @@ import {
   assertTerminalId,
   assertUuid,
   isUuid,
-  RESERVED_ALIAS_RE,
   TERMINAL_ID_RE,
 } from "../../src/domain/validation";
 import type { AgCliError } from "../../src/types/protocol";
@@ -53,16 +52,16 @@ describe("uuid validation", () => {
 });
 
 describe("alias validation", () => {
-  it("keeps short-id style names reserved", () => {
-    expect(RESERVED_ALIAS_RE.test("c1")).toBe(true);
-    expect(RESERVED_ALIAS_RE.test("C12")).toBe(true);
-    expect(RESERVED_ALIAS_RE.test("clip")).toBe(false);
+  it("keeps short-id style names valid aliases (docs/02 §2.2, review F20)", () => {
+    expect(ALIAS_RE.test("c1")).toBe(true);
     expect(ALIAS_RE.test("clip-worker")).toBe(true);
     expect(ALIAS_RE.test("Bad")).toBe(false);
   });
 
-  it("rejects reserved and malformed aliases with invalid_usage", () => {
-    for (const bad of ["c1", "C7", "Bad", "-lead", "with space"]) {
+  it("accepts short-id style aliases and rejects malformed ones", () => {
+    expect(assertAlias("c1")).toBe("c1");
+    expect(assertAlias("c7")).toBe("c7");
+    for (const bad of ["Bad", "-lead", "with space", "a.b"]) {
       try {
         assertAlias(bad);
         expect.unreachable(`must throw for ${bad}`);
