@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentApiClient } from "../../src/infra/agentapi-client";
@@ -335,6 +336,195 @@ describe("agentapi subprocess wrappers", () => {
 });
 
 describe("Connect RPC helpers", () => {
+  it("rejects an upstream conversation id that is not a uuid with runtime_error (review F9)", async () => {
+    const instance = sandbox();
+    initSummariesDb(instance);
+    const client = await connectedClient(instance);
+    writeFileSync(
+      instance.agentapiBin,
+      '#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({conversationId: "../../victim"}));\n',
+      { mode: 0o755 },
+    );
+    try {
+      await client.newConversation({ message: "synthetic" });
+      expect.unreachable("must throw");
+    } catch (error) {
+      expect((error as AgCliError).kind).toBe("runtime_error");
+      expect((error as AgCliError).exitCode).toBe(1);
+    }
+  });
+
+  it("rejects a non-uuid conversation id in getConversationMetadata with runtime_error (review F9)", async () => {
+    const instance = sandbox();
+    const client = await connectedClient(instance);
+    writeFileSync(
+      instance.agentapiBin,
+      '#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({conversation_id: process.argv[4], status: "CASCADE_RUN_STATUS_IDLE"}));\n',
+      { mode: 0o755 },
+    );
+    try {
+      await client.getConversationMetadata("../../victim");
+      expect.unreachable("must throw");
+    } catch (error) {
+      expect((error as AgCliError).kind).toBe("runtime_error");
+      expect((error as AgCliError).exitCode).toBe(1);
+    }
+  });
+
+  it("rejects when the response body is cut off mid-json (review F5)", async () => {
+    const instance = sandbox();
+    const broken = createServer((req, res) => {
+      if (req.url === "/healthz") {
+        res.writeHead(200);
+        res.end("ok");
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json", "content-length": "1000" });
+      res.write('{"projects":');
+      setTimeout(() => res.destroy(), 20);
+    });
+    const port = await new Promise<number>((resolve) => {
+      broken.listen(0, "127.0.0.1", () => resolve((broken.address() as { port: number }).port));
+    });
+    servers.push({
+      server: broken,
+      port,
+      csrfToken: "synthetic",
+      requests: [],
+      rpcCalls: [],
+      close: () =>
+        new Promise<void>((resolve) => {
+          broken.close(() => resolve());
+        }),
+    });
+    writeHubFile(instance, {
+      pid: process.pid,
+      httpPort: port,
+      httpsPort: 0,
+      lsVersion: "broken",
+      csrfToken: "synthetic",
+    });
+    writeMockAgentapi(instance);
+    const client = await AgentApiClient.connect({
+      antigravityDir: instance.antigravityDir,
+      agentapiBin: instance.agentapiBin,
+    });
+
+    const deadline = new Promise<"hung">((resolve) => {
+      setTimeout(() => resolve("hung"), 6000);
+    });
+    const outcome = await Promise.race([
+      client
+        .listProjects()
+        .then(() => "resolved" as const)
+        .catch((error: AgCliError) => {
+          expect(error.kind).toBe("runtime_error");
+          return "rejected" as const;
+        }),
+      deadline,
+    ]);
+    expect(outcome).toBe("rejected");
+  });
+
+  it("rejects invalid rpc json bodies and hanging servers past the deadline (review F5)", async () => {
+    const instance = sandbox();
+    const garbage = createServer((_req, res) => {
+      if (_req.url === "/healthz") {
+        res.writeHead(200);
+        res.end("ok");
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("not json at all");
+    });
+    const port = await new Promise<number>((resolve) => {
+      garbage.listen(0, "127.0.0.1", () => resolve((garbage.address() as { port: number }).port));
+    });
+    servers.push({
+      server: garbage,
+      port,
+      csrfToken: "synthetic",
+      requests: [],
+      rpcCalls: [],
+      close: () =>
+        new Promise<void>((resolve) => {
+          garbage.close(() => resolve());
+        }),
+    });
+    writeHubFile(instance, {
+      pid: process.pid,
+      httpPort: port,
+      httpsPort: 0,
+      lsVersion: "garbage",
+      csrfToken: "synthetic",
+    });
+    writeMockAgentapi(instance);
+    const client = await AgentApiClient.connect({
+      antigravityDir: instance.antigravityDir,
+      agentapiBin: instance.agentapiBin,
+    });
+    try {
+      await client.listProjects();
+      expect.unreachable("must throw");
+    } catch (error) {
+      expect((error as AgCliError).message).toContain("invalid json");
+    }
+
+    const hanging = createServer((req, res) => {
+      if (req.url === "/healthz") {
+        res.writeHead(200);
+        res.end("ok");
+        return;
+      }
+      // never respond to the RPC
+    });
+    const hangPort = await new Promise<number>((resolve) => {
+      hanging.listen(0, "127.0.0.1", () => resolve((hanging.address() as { port: number }).port));
+    });
+    servers.push({
+      server: hanging,
+      port: hangPort,
+      csrfToken: "synthetic",
+      requests: [],
+      rpcCalls: [],
+      close: () =>
+        new Promise<void>((resolve) => {
+          hanging.close(() => resolve());
+        }),
+    });
+    writeHubFile(instance, {
+      pid: process.pid,
+      httpPort: hangPort,
+      httpsPort: 0,
+      lsVersion: "hanging",
+      csrfToken: "synthetic",
+    });
+    const slowClient = await AgentApiClient.connect({
+      antigravityDir: instance.antigravityDir,
+      agentapiBin: instance.agentapiBin,
+      rpcTimeoutMs: 100,
+    });
+    try {
+      await slowClient.listProjects();
+      expect.unreachable("must throw");
+    } catch (error) {
+      expect((error as AgCliError).kind).toBe("runtime_error");
+      expect((error as AgCliError).message).toContain("deadline exceeded");
+    }
+  });
+
+  it("ignores project folders with unparsable file uris", async () => {
+    const instance = sandbox();
+    const client = await connectedClient(instance, {
+      responses: {
+        ListProjects: {
+          projects: [{ projectId: "proj-bad", folderUri: "file://%%" }],
+        },
+      },
+    });
+    expect(await client.resolveProjectIdForCwd("/tmp/anything")).toBeNull();
+  });
+
   it("listProjects and readProject call the language server with the csrf token", async () => {
     const instance = sandbox();
     const client = await connectedClient(instance, {

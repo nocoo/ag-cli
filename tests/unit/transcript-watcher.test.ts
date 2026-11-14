@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { TranscriptWatcher, type WatchChangeSource } from "../../src/infra/transcript-watcher";
@@ -354,5 +354,214 @@ describe("close", () => {
     appendFileSync(transcriptPath(instance), step(0));
     await new Promise((resolve) => setTimeout(resolve, 120));
     expect(calls).toBe(0);
+  });
+
+  it("never reopens summaries probes or watchers after close inside onChange (review F6)", async () => {
+    const instance = sandbox();
+    initSummariesDb(instance);
+    mkdirSync(logsDir(instance), { recursive: true });
+    writeFileSync(transcriptPath(instance), step(0));
+    let watcher: TranscriptWatcher | undefined;
+    watcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      summariesDbPath: instance.summariesDbPath,
+      debounceMs: 5,
+      fallbackMs: 20,
+      onChange: () => {
+        watcher?.close();
+      },
+    });
+    watcher.start();
+    appendFileSync(transcriptPath(instance), step(1));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect((watcher as unknown as { closed: boolean }).closed).toBe(true);
+    expect((watcher as unknown as { summariesProbe: unknown }).summariesProbe).toBeNull();
+    const watchersAfter = (watcher as unknown as { watchers: unknown[] }).watchers.length;
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect((watcher as unknown as { watchers: unknown[] }).watchers.length).toBe(watchersAfter);
+    expect((watcher as unknown as { summariesProbe: unknown }).summariesProbe).toBeNull();
+  });
+
+  it("fallbackCheck stops at the first onChange that closes the watcher (review F6)", () => {
+    const instance = sandbox();
+    const db = initSummariesDb(instance);
+    mkdirSync(logsDir(instance), { recursive: true });
+    writeFileSync(transcriptPath(instance), step(0));
+    let calls = 0;
+    const watcher: TranscriptWatcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      summariesDbPath: instance.summariesDbPath,
+      onChange: () => {
+        calls += 1;
+        watcher.close();
+      },
+    });
+    const internals = watcher as unknown as {
+      lastTranscriptStat: { size: number; mtimeMs: number };
+      lastDataVersion: number | null;
+      fallbackCheck(): void;
+      attachLateLogsDir(): void;
+      readDataVersion(): number | null;
+      closed: boolean;
+    };
+    const stats = statSync(transcriptPath(instance));
+    internals.lastTranscriptStat = { size: stats.size, mtimeMs: stats.mtimeMs };
+    internals.lastDataVersion = 1;
+    db.exec(
+      "INSERT INTO conversation_summaries (conversation_id) VALUES ('33333333-3333-4333-8333-333333333333')",
+    );
+    internals.fallbackCheck();
+    expect(internals.closed).toBe(true);
+    expect(calls).toBe(1);
+    internals.fallbackCheck();
+    internals.attachLateLogsDir();
+    expect(internals.readDataVersion()).toBeNull();
+    expect(calls).toBe(1);
+    db.close();
+  });
+
+  it("fallbackCheck stops when a transcript or state change closes the watcher (review F6)", () => {
+    const instance = sandbox();
+    mkdirSync(logsDir(instance), { recursive: true });
+    writeFileSync(transcriptPath(instance), step(0));
+    const stateDb = join(instance.agCliHome, "state.db");
+    mkdirSync(instance.agCliHome, { recursive: true });
+    writeFileSync(stateDb, "x");
+
+    let transcriptCalls = 0;
+    const transcriptWatcher: TranscriptWatcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      onChange: () => {
+        transcriptCalls += 1;
+        transcriptWatcher.close();
+      },
+    });
+    const transcriptInternals = transcriptWatcher as unknown as {
+      lastTranscriptStat: { size: number; mtimeMs: number };
+      fallbackCheck(): void;
+      closed: boolean;
+    };
+    transcriptInternals.lastTranscriptStat = { size: -1, mtimeMs: -1 };
+    transcriptInternals.fallbackCheck();
+    expect(transcriptInternals.closed).toBe(true);
+    expect(transcriptCalls).toBe(1);
+
+    let stateCalls = 0;
+    const stateWatcher: TranscriptWatcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      stateDbPath: stateDb,
+      onChange: () => {
+        stateCalls += 1;
+        stateWatcher.close();
+      },
+    });
+    const stateInternals = stateWatcher as unknown as {
+      lastTranscriptStat: { size: number; mtimeMs: number };
+      lastStateMtime: number | null;
+      lastDataVersion: number | null;
+      fallbackCheck(): void;
+      closed: boolean;
+    };
+    const transcriptStats = statSync(transcriptPath(instance));
+    stateInternals.lastTranscriptStat = {
+      size: transcriptStats.size,
+      mtimeMs: transcriptStats.mtimeMs,
+    };
+    stateInternals.lastDataVersion = null;
+    stateInternals.lastStateMtime = -1;
+    stateInternals.fallbackCheck();
+    expect(stateInternals.closed).toBe(true);
+    expect(stateCalls).toBe(1);
+  });
+
+  it("priming without a summaries db and debounce after close are no-ops (review F6)", async () => {
+    const instance = sandbox();
+    mkdirSync(logsDir(instance), { recursive: true });
+    writeFileSync(transcriptPath(instance), step(0));
+    let calls = 0;
+    const watcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      debounceMs: 5,
+      fallbackMs: 10_000,
+      onChange: () => {
+        calls += 1;
+      },
+    });
+    watcher.start();
+    watcher.close();
+    (watcher as unknown as { schedule: () => void }).schedule();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(calls).toBe(0);
+  });
+});
+
+describe("in-place rewrite detection (review F12)", () => {
+  it("resets the cursor and cache when the file is rewritten in place with equal size", () => {
+    const instance = sandbox();
+    mkdirSync(logsDir(instance), { recursive: true });
+    const path = transcriptPath(instance);
+    writeFileSync(path, step(0, { content: "A" }));
+    const watcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      onChange: () => {},
+    });
+    watcher.readNewSteps();
+    expect(watcher.currentSteps()).toHaveLength(1);
+
+    writeFileSync(path, step(0, { content: "B" }));
+    const fresh = watcher.readNewSteps();
+    expect(fresh.map((entry) => entry.content)).toEqual(["B"]);
+    expect(watcher.currentSteps().map((entry) => entry.content)).toEqual(["B"]);
+    watcher.close();
+  });
+
+  it("resets the cursor and cache when a longer in-place rewrite replaces old content", () => {
+    const instance = sandbox();
+    mkdirSync(logsDir(instance), { recursive: true });
+    const path = transcriptPath(instance);
+    writeFileSync(path, step(0, { content: "A" }));
+    writeFileSync(path, step(0, { content: "short" }) + step(1, { content: "also short" }));
+    const watcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      onChange: () => {},
+    });
+    watcher.readNewSteps();
+    expect(watcher.currentSteps()).toHaveLength(2);
+
+    writeFileSync(
+      path,
+      step(0, { content: "a much longer rewritten line that changes every offset" }),
+    );
+    const fresh = watcher.readNewSteps();
+    expect(fresh).toHaveLength(1);
+    expect(watcher.currentSteps()).toHaveLength(1);
+    expect(watcher.currentSteps()[0]?.content).toBe(
+      "a much longer rewritten line that changes every offset",
+    );
+    watcher.close();
+  });
+
+  it("keeps the cache when only new bytes are appended", () => {
+    const instance = sandbox();
+    mkdirSync(logsDir(instance), { recursive: true });
+    const path = transcriptPath(instance);
+    writeFileSync(path, step(0, { content: "A" }));
+    const watcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      onChange: () => {},
+    });
+    watcher.readNewSteps();
+    appendFileSync(path, step(1, { content: "appended" }));
+    watcher.readNewSteps();
+    expect(watcher.currentSteps().map((entry) => entry.step_index)).toEqual([0, 1]);
+    watcher.close();
   });
 });

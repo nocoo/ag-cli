@@ -1,10 +1,10 @@
+import { createHash, type Hash } from "node:crypto";
 import {
   closeSync,
   existsSync,
   type FSWatcher,
   openSync,
   readSync,
-  type Stats,
   statSync,
   watch,
 } from "node:fs";
@@ -32,6 +32,8 @@ interface FileCursor {
   inode: number | null;
   size: number;
   mtimeMs: number;
+  hash: Hash;
+  contentHash: string;
 }
 
 export class TranscriptWatcher {
@@ -85,6 +87,8 @@ export class TranscriptWatcher {
       inode: null,
       size: 0,
       mtimeMs: 0,
+      hash: createHash("sha256"),
+      contentHash: "",
     };
   }
 
@@ -136,9 +140,6 @@ export class TranscriptWatcher {
   }
 
   private primeSummariesBaseline(): void {
-    if (this.summariesDbPath === undefined) {
-      return;
-    }
     this.lastDataVersion = this.readDataVersion();
   }
 
@@ -150,6 +151,9 @@ export class TranscriptWatcher {
   }
 
   private readDataVersion(): number | null {
+    if (this.closed) {
+      return null;
+    }
     if (this.summariesDbPath === undefined || !existsSync(this.summariesDbPath)) {
       return null;
     }
@@ -160,10 +164,10 @@ export class TranscriptWatcher {
         db.exec("PRAGMA busy_timeout = 3000;");
         this.summariesProbe = db;
       }
-      const row = this.summariesProbe.prepare("PRAGMA data_version").get() as
-        | { data_version?: number }
-        | undefined;
-      return row?.data_version ?? null;
+      const row = this.summariesProbe.prepare("PRAGMA data_version").get() as {
+        data_version: number;
+      };
+      return row.data_version;
     } catch {
       return null;
     }
@@ -219,12 +223,18 @@ export class TranscriptWatcher {
     }
     if (transcriptChanged) {
       this.onChange("transcript");
+      if (this.closed) {
+        return;
+      }
     }
 
     const dataVersion = this.readDataVersion();
     if (dataVersion !== null) {
       if (this.lastDataVersion !== null && dataVersion !== this.lastDataVersion) {
         this.onChange("summaries");
+        if (this.closed) {
+          return;
+        }
       }
       this.lastDataVersion = dataVersion;
     }
@@ -233,6 +243,9 @@ export class TranscriptWatcher {
       const mtimeMs = statSync(this.stateDbPath).mtimeMs;
       if (this.lastStateMtime !== null && mtimeMs !== this.lastStateMtime) {
         this.onChange("state");
+        if (this.closed) {
+          return;
+        }
       }
       this.lastStateMtime = mtimeMs;
     }
@@ -241,6 +254,9 @@ export class TranscriptWatcher {
   }
 
   private attachLateLogsDir(): void {
+    if (this.closed) {
+      return;
+    }
     const logsDir = join(
       this.antigravityDir,
       "brain",
@@ -255,9 +271,16 @@ export class TranscriptWatcher {
   }
 
   readNewSteps(): TranscriptStep[] {
-    const steps = this.readIncremental(this.transcriptPath, this.transcript, (cursor) => {
-      this.transcript = cursor;
-    });
+    const steps = this.readIncremental(
+      this.transcriptPath,
+      this.transcript,
+      (cursor) => {
+        this.transcript = cursor;
+      },
+      () => {
+        this.cachedSteps = [];
+      },
+    );
     if (steps.length > 0) {
       this.cachedSteps = [...this.cachedSteps, ...steps];
     }
@@ -265,9 +288,14 @@ export class TranscriptWatcher {
   }
 
   readNewFullSteps(): TranscriptStep[] {
-    return this.readIncremental(this.fullPath, this.full, (cursor) => {
-      this.full = cursor;
-    });
+    return this.readIncremental(
+      this.fullPath,
+      this.full,
+      (cursor) => {
+        this.full = cursor;
+      },
+      undefined,
+    );
   }
 
   currentSteps(): TranscriptStep[] {
@@ -278,21 +306,58 @@ export class TranscriptWatcher {
     cursor.byteOffset = 0;
     cursor.partial = "";
     cursor.decoder = new StringDecoder("utf8");
+    cursor.hash = createHash("sha256");
+    cursor.contentHash = "";
+  }
+
+  private static hashPrefix(path: string, length: number): string {
+    if (length <= 0) {
+      return "";
+    }
+    const fd = openSync(path, "r");
+    try {
+      const hash = createHash("sha256");
+      let offset = 0;
+      while (offset < length) {
+        const chunk = Math.min(64 * 1024, length - offset);
+        const buffer = Buffer.alloc(chunk);
+        const bytes = readSync(fd, buffer, 0, chunk, offset);
+        if (bytes <= 0) {
+          break;
+        }
+        hash.update(buffer.subarray(0, bytes));
+        offset += bytes;
+      }
+      return hash.digest("hex");
+    } finally {
+      closeSync(fd);
+    }
   }
 
   private readIncremental(
     path: string,
     cursor: FileCursor,
     replace: (cursor: FileCursor) => void,
+    onRewrite?: () => void,
   ): TranscriptStep[] {
     if (!existsSync(path)) {
       TranscriptWatcher.resetCursor(cursor);
+      onRewrite?.();
       replace(cursor);
       return [];
     }
     const stats = statSync(path);
-    if (this.detectRewrite(cursor, stats)) {
+    const onDiskPrefix = TranscriptWatcher.hashPrefix(
+      path,
+      Math.min(stats.size, cursor.byteOffset),
+    );
+    const rewritten =
+      stats.size < cursor.byteOffset ||
+      (cursor.inode !== null && stats.ino !== cursor.inode) ||
+      onDiskPrefix !== cursor.contentHash;
+    if (rewritten) {
       TranscriptWatcher.resetCursor(cursor);
+      onRewrite?.();
       replace(cursor);
     }
     if (stats.size === cursor.byteOffset) {
@@ -310,6 +375,7 @@ export class TranscriptWatcher {
           break;
         }
         offset += bytes;
+        cursor.hash.update(buffer.subarray(0, bytes));
         const text = cursor.decoder.write(buffer.subarray(0, bytes));
         const chunk = cursor.partial + text;
         const lines = chunk.split("\n");
@@ -323,20 +389,11 @@ export class TranscriptWatcher {
       cursor.inode = stats.ino;
       cursor.size = stats.size;
       cursor.mtimeMs = stats.mtimeMs;
+      cursor.contentHash = cursor.hash.copy().digest("hex");
       replace(cursor);
       return steps;
     } finally {
       closeSync(fd);
     }
-  }
-
-  private detectRewrite(cursor: FileCursor, stats: Stats): boolean {
-    if (stats.size < cursor.byteOffset) {
-      return true;
-    }
-    if (cursor.inode !== null && stats.ino !== cursor.inode) {
-      return true;
-    }
-    return stats.size === cursor.size && stats.size > 0 && stats.mtimeMs !== cursor.mtimeMs;
   }
 }

@@ -4,6 +4,7 @@ import { request } from "node:http";
 import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { assertUuid } from "../domain/validation";
 import { AgCliError } from "../types/protocol";
 import { type DaemonCandidate, discoverDaemon, type HealthProbe } from "./daemon-discovery";
 
@@ -20,6 +21,7 @@ export class AgentApiClient {
     private readonly agentapiBin: string,
     private readonly baseEnv: Record<string, string | undefined>,
     private readonly projectId: string | undefined,
+    private readonly rpcTimeoutMs: number,
   ) {}
 
   static async connect(options: {
@@ -28,6 +30,7 @@ export class AgentApiClient {
     probe?: HealthProbe;
     baseEnv?: Record<string, string | undefined>;
     projectId?: string;
+    rpcTimeoutMs?: number;
   }): Promise<AgentApiClient> {
     const daemon = await discoverDaemon(options.antigravityDir, { probe: options.probe });
     let executable = false;
@@ -49,6 +52,7 @@ export class AgentApiClient {
       options.agentapiBin,
       options.baseEnv ?? process.env,
       options.projectId,
+      options.rpcTimeoutMs ?? 5000,
     );
   }
 
@@ -127,7 +131,7 @@ export class AgentApiClient {
     if (typeof conversationId !== "string" || conversationId.length === 0) {
       throw new AgCliError("runtime_error", `agentapi new-conversation returned no conversationId`);
     }
-    return { conversationId };
+    return { conversationId: assertUuid(conversationId, "upstream") };
   }
 
   async sendMessage(
@@ -145,12 +149,33 @@ export class AgentApiClient {
   }
 
   async getConversationMetadata(conversationId: string): Promise<Record<string, unknown>> {
+    assertUuid(conversationId, "upstream");
     return this.runAgentapi(["get-conversation-metadata", "--conversation-id", conversationId]);
   }
 
   private async rpc<T>(method: string, body: Record<string, unknown>): Promise<T> {
     const payload = JSON.stringify(body);
-    return new Promise<T>((resolvePromise, rejectPromise) => {
+    return new Promise<T>((resolvePromise, rejectOnce) => {
+      let settled = false;
+      let responseRef: import("node:http").IncomingMessage | undefined;
+      let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+      const reject = (error: AgCliError): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(deadlineTimer);
+        rejectOnce(error);
+      };
+      const resolve = (value: T): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(deadlineTimer);
+        resolvePromise(value);
+      };
+
       const req = request(
         {
           host: "127.0.0.1",
@@ -162,16 +187,37 @@ export class AgentApiClient {
             "x-codeium-csrf-token": this.daemon.csrfToken,
             "content-length": Buffer.byteLength(payload),
           },
-          timeout: 5000,
         },
         (response) => {
           let raw = "";
+          let ended = false;
           response.on("data", (chunk: Buffer) => {
             raw += chunk.toString();
           });
+          response.on("aborted", () => {
+            reject(
+              new AgCliError("runtime_error", `RPC ${method} response aborted before completion`),
+            );
+          });
+          response.on("error", (error: Error) => {
+            reject(
+              new AgCliError("runtime_error", `RPC ${method} response failed: ${error.message}`),
+            );
+          });
+          response.on("close", () => {
+            if (!ended) {
+              reject(
+                new AgCliError("runtime_error", `RPC ${method} response closed before completion`),
+              );
+            }
+          });
           response.on("end", () => {
+            ended = true;
+            if (settled) {
+              return;
+            }
             if (response.statusCode !== 200) {
-              rejectPromise(
+              reject(
                 new AgCliError(
                   "runtime_error",
                   `RPC ${method} failed with status ${response.statusCode}`,
@@ -180,20 +226,23 @@ export class AgentApiClient {
               return;
             }
             try {
-              resolvePromise((raw.length === 0 ? {} : JSON.parse(raw)) as T);
+              resolve(raw.length === 0 ? ({} as T) : (JSON.parse(raw) as T));
             } catch {
-              rejectPromise(new AgCliError("runtime_error", `RPC ${method} returned invalid json`));
+              reject(new AgCliError("runtime_error", `RPC ${method} returned invalid json`));
             }
           });
         },
       );
-      req.on("timeout", () => {
-        req.destroy(new Error("timeout"));
+      deadlineTimer = setTimeout(() => {
+        req.destroy();
+        responseRef?.destroy();
+        reject(new AgCliError("runtime_error", `RPC ${method} deadline exceeded`));
+      }, this.rpcTimeoutMs);
+      req.on("response", (response) => {
+        responseRef = response;
       });
       req.on("error", (error: Error) => {
-        rejectPromise(
-          new AgCliError("runtime_error", `RPC ${method} request failed: ${error.message}`),
-        );
+        reject(new AgCliError("runtime_error", `RPC ${method} request failed: ${error.message}`));
       });
       req.write(payload);
       req.end();

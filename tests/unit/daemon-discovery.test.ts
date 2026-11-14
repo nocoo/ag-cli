@@ -69,33 +69,60 @@ describe("isPidAlive", () => {
 });
 
 describe("httpHealthzProbe", () => {
-  it("returns true when /healthz responds 200", async () => {
-    const probe = async () => new Response('{"status":"ok"}', { status: 200 });
-    await expect(httpHealthzProbe(1234, probe as unknown as typeof fetch)).resolves.toBe(true);
+  it("returns true when /healthz responds 200 over node:http", async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"status":"ok"}');
+    });
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port));
+    });
+    await expect(httpHealthzProbe(port)).resolves.toBe(true);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
   it("returns false on non-200 responses", async () => {
-    const probe = async () => new Response("nope", { status: 503 });
-    await expect(httpHealthzProbe(1234, probe as unknown as typeof fetch)).resolves.toBe(false);
+    const server = createServer((_req, res) => {
+      res.writeHead(503);
+      res.end("nope");
+    });
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port));
+    });
+    await expect(httpHealthzProbe(port)).resolves.toBe(false);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  it("returns false when the request fails", async () => {
-    const probe = async () => {
-      throw new Error("connection refused");
-    };
-    await expect(httpHealthzProbe(1234, probe as unknown as typeof fetch)).resolves.toBe(false);
-  });
-
-  it("returns false against a closed local port with the default fetch", async () => {
+  it("returns false against a closed local port", async () => {
     const server = createServer();
     const port = await new Promise<number>((resolve) => {
-      server.listen(0, "127.0.0.1", () => {
-        resolve((server.address() as { port: number }).port);
-      });
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port));
     });
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await expect(httpHealthzProbe(port)).resolves.toBe(false);
   });
+
+  it("returns false when the server accepts the socket then destroys it without a response", async () => {
+    const server = createServer((_req, res) => {
+      res.socket?.destroy();
+    });
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port));
+    });
+    await expect(httpHealthzProbe(port)).resolves.toBe(false);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("returns false when the server hangs and the hard deadline fires (review P3-32)", async () => {
+    const server = createServer(() => {});
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port));
+    });
+    const started = Date.now();
+    await expect(httpHealthzProbe(port, 300)).resolves.toBe(false);
+    expect(Date.now() - started).toBeLessThan(3000);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }, 10_000);
 });
 
 describe("inspectDaemons", () => {

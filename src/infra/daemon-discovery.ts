@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { request } from "node:http";
 import { join } from "node:path";
 import { AgCliError } from "../types/protocol";
 
@@ -29,19 +30,47 @@ export function isPidAlive(pid: number): boolean {
   }
 }
 
-export async function httpHealthzProbe(
-  port: number,
-  fetchFn: typeof fetch = fetch,
-  timeoutMs = 1500,
-): Promise<boolean> {
-  try {
-    const response = await fetchFn(`http://127.0.0.1:${port}/healthz`, {
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    return response.status === 200;
-  } catch {
-    return false;
-  }
+export async function httpHealthzProbe(port: number, timeoutMs = 1500): Promise<boolean> {
+  return new Promise<boolean>((resolveOnce) => {
+    let settled = false;
+    const settle = (value: boolean): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(deadlineTimer);
+      resolveOnce(value);
+    };
+    const req = request(
+      {
+        host: "127.0.0.1",
+        port,
+        path: "/healthz",
+        method: "GET",
+        headers: { accept: "application/json" },
+      },
+      (response) => {
+        let ended = false;
+        response.on("data", () => {});
+        response.on("end", () => {
+          ended = true;
+          settle(response.statusCode === 200);
+        });
+        response.on("aborted", () => settle(false));
+        response.on("close", () => {
+          if (!ended) {
+            settle(false);
+          }
+        });
+      },
+    );
+    const deadlineTimer = setTimeout(() => {
+      req.destroy();
+      settle(false);
+    }, timeoutMs);
+    req.on("error", () => settle(false));
+    req.end();
+  });
 }
 
 function asPositiveInt(value: unknown): number | undefined {
