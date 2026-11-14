@@ -41,8 +41,8 @@ must keep zero direct upstream URLs: `rg -c '", "https' bun.lock` stays empty.
   Always isolate via `AG_CLI_HOME`, `AG_CLI_CONFIG_DIR`,
   `AG_CLI_ANTIGRAVITY_DIR`, `AG_CLI_AGENTAPI_BIN` into temp dirs
   (`tests/helpers/sandbox.ts`).
-- `conversation_summaries.db` is strictly read-only (`readOnly: true`); ag-cli
-  writes only its own `state.db`.
+- `conversation_summaries.db` is strictly read-only (`PRAGMA query_only = ON`);
+  ag-cli writes only its own `state.db`.
 - State derives from observed facts only; never regex-guess model prose.
 - Strict TDD per `docs/05`: Red -> Green -> Refactor -> Gate, then an atomic
   commit on `main` (Conventional Commits, <= 50 chars, explicit `git add`).

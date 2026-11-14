@@ -68,6 +68,7 @@ Caller (ag-cli)            agentapi / language_server          conversation_summ
    - 在该入站步骤**之后**，出现了 `type == "PLANNER_RESPONSE"` 且 `status == "DONE"` 且无未决 `tool_calls` 的最终步骤；
    - 并且 `conversation_summaries.db` 中该会话 `status == "CASCADE_RUN_STATUS_IDLE"` 且 `not_fully_idle == 0`。
 4. **水位线清零/推进**：一旦判定 `done` 并更新 `last_turn`，维持 `watermark_step` 为当前已观测入站 step index，保证下次 `ag-cli get` / `ag-cli ls` 幂等得出 `done`。
+5. **投递回滚的所有权**：每次投递通过 `delivery_seq` 单调递增的投递序号登记（`beginDelivery`），发送失败时的回滚（`rollbackDelivery`）仅在该序号仍归本次投递所有时才恢复水位线或删除新建注册行；标签写入同样推进序号，防止并发投递的回滚误删他人成果。同名创建通过 `name_reservations` 在派发前互斥。
 
 ---
 
@@ -117,6 +118,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   watermark_step  INTEGER NOT NULL DEFAULT -1,       -- 投递防竞态水位线
   last_turn       INTEGER NOT NULL DEFAULT 0,        -- 已完成轮次计数
   terminated      INTEGER NOT NULL DEFAULT 0,        -- 1 表示已 ag-cli kill
+  delivery_seq    INTEGER NOT NULL DEFAULT 0,        -- 投递序号（回滚所有权判定）
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL
 );
@@ -127,6 +129,12 @@ CREATE TABLE IF NOT EXISTS labels (
   value           TEXT NOT NULL,
   PRIMARY KEY (conversation_id, key),
   FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS name_reservations (
+  name       TEXT PRIMARY KEY,                       -- 并发 run --name 的创建互斥
+  token      TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversations_parent ON conversations(parent_id);

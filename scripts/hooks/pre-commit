@@ -24,9 +24,28 @@ if [ -d "$snapshot/tests" ]; then
   fi
 fi
 
-if [ -d node_modules ] && [ ! -e "$snapshot/node_modules" ]; then
-  ln -s "$repo_root/node_modules" "$snapshot/node_modules"
-fi
+link_or_install_deps() {
+  if [ ! -d node_modules ] || [ -e "$snapshot/node_modules" ]; then
+    return
+  fi
+  local root_pkg root_lock snap_pkg snap_lock
+  root_pkg=$(shasum package.json 2>/dev/null | cut -d' ' -f1 || true)
+  root_lock=$(shasum bun.lock 2>/dev/null | cut -d' ' -f1 || true)
+  snap_pkg=$(shasum "$snapshot/package.json" 2>/dev/null | cut -d' ' -f1 || true)
+  snap_lock=$(shasum "$snapshot/bun.lock" 2>/dev/null | cut -d' ' -f1 || true)
+  if [ -n "$root_pkg" ] && [ -n "$root_lock" ] && \
+     [ "$root_pkg" = "$snap_pkg" ] && [ "$root_lock" = "$snap_lock" ]; then
+    ln -s "$repo_root/node_modules" "$snapshot/node_modules"
+  else
+    echo "pre-commit: snapshot deps differ from the worktree; installing in snapshot" >&2
+    (
+      cd "$snapshot"
+      BUN_CONFIG_REGISTRY=https://registry.npmmirror.com/ bun install --frozen-lockfile
+    )
+  fi
+}
+
+link_or_install_deps
 
 if [ -f "$snapshot/bun.lock" ]; then
   count=$(rg -c '", "https' "$snapshot/bun.lock" || true)

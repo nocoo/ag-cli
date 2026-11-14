@@ -36,14 +36,28 @@ for oid in "${unique[@]}"; do
   snapshot="$snapshots/$oid"
   mkdir -p "$snapshot"
   git archive "$oid" | tar -x -C "$snapshot"
+
   if [ -d node_modules ] && [ ! -e "$snapshot/node_modules" ]; then
-    ln -s "$repo_root/node_modules" "$snapshot/node_modules"
+    root_pkg=$(shasum package.json 2>/dev/null | cut -d' ' -f1 || true)
+    root_lock=$(shasum bun.lock 2>/dev/null | cut -d' ' -f1 || true)
+    snap_pkg=$(shasum "$snapshot/package.json" 2>/dev/null | cut -d' ' -f1 || true)
+    snap_lock=$(shasum "$snapshot/bun.lock" 2>/dev/null | cut -d' ' -f1 || true)
+    if [ -n "$root_pkg" ] && [ -n "$root_lock" ] && \
+       [ "$root_pkg" = "$snap_pkg" ] && [ "$root_lock" = "$snap_lock" ]; then
+      ln -s "$repo_root/node_modules" "$snapshot/node_modules"
+    else
+      echo "pre-push: snapshot deps differ from the worktree; installing in snapshot" >&2
+      (
+        cd "$snapshot"
+        BUN_CONFIG_REGISTRY=https://registry.npmmirror.com/ bun install --frozen-lockfile
+      )
+    fi
   fi
 
   echo "pre-push: checking $oid in $snapshot"
 
   gitleaks git --log-opts="$oid --not --remotes" --redact
-  gitleaks detect --source "$snapshot" --no-banner --redact
+  gitleaks detect --no-git --source "$snapshot" --no-banner --redact
 
   (
     cd "$snapshot"

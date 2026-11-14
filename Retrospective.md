@@ -126,3 +126,40 @@ inside the packed tarball; `scripts/check-package.ts` smoke-tests it after insta
 - **The push gate must test what is pushed.** `pre-push` now checks every pushed
   revision in an isolated snapshot instead of running the gates once in the working
   tree.
+
+## 2026-11-14 · Round 2 review lessons (ag-cli-reviewer, F1–F20 + P3-30..32)
+
+- **Fix the call site, not just the helper.** `AgentApiClient.newConversation` gained
+  `model`/`projectId` parameters, but `run.ts` never passed them; the new client-level
+  test stayed green while production dispatch ignored both. Regression tests must go
+  through the CLI and assert the real agentapi argv/env.
+- **Watermark rollback needs ownership, not value comparison.** Two concurrent
+  deliveries share the same watermark value, so value-based rollback (`WHERE
+  watermark_step = ?`) let a failed delivery clobber a successful one (ABA) and delete
+  an adopted row out from under labels written after another delivery succeeded.
+  Deliveries now carry a monotonic `delivery_seq` ticket; rollback applies only when
+  the ticket still owns the row, and label writes advance the sequence too.
+- **Same-name creation must be coordinated before dispatch.** Two concurrent
+  `run --name X` both passed the "name free" check and both dispatched; killing a
+  conversation kept the alias so `--reuse` dispatched before failing. Names are now
+  released on termination, `run --name` takes an exclusive `name_reservations` row
+  before `newConversation`, and `--reuse` waits out an in-flight reservation.
+- **"Resources closed" and "promise settled" are different flags.** A persistence
+  failure after `cleanup()` set `finished = true`, and the fail path then declined to
+  reject — a forever-pending wait. Settled/stopped are tracked separately so the
+  promise always resolves or rejects.
+- **HTTP responses can die mid-body.** A 200 with `content-length` and a severed
+  socket left the RPC pending forever because only `data`/`end` were handled. The
+  client now listens for `aborted`/`error`/`close` without `end` and enforces an
+  absolute deadline that destroys both request and response.
+- **A rewrite must reset the cache, not just the cursor.** Equal-size and longer
+  in-place rewrites reset the byte cursor, but `currentSteps()` kept serving the stale
+  cache — duplicate turns, wrong telemetry. The cursor now tracks a sha256 of the
+  consumed prefix; any in-place change resets cursor and cache together.
+- **Watchers must stop doing I/O after close.** `onChange` callbacks that close the
+  watcher let the fallback tick reopen summary probes and rebind directory watchers.
+  Every post-callback step re-checks `closed`.
+- **Green gates must exercise the failing layer.** Schema tests hand-resolved
+  `$ref`s instead of following JSON pointers; hook scans ran gitleaks in git mode
+  against a sourceless archive and trivially passed. Tests now validate real command
+  output against `$defs` and the archive scan uses `--no-git`.
