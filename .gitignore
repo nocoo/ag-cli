@@ -7,4 +7,4 @@ coverage
 REVIEW.md
 
 # bun compile cache artifacts
-.bun-build
+*.bun-build
