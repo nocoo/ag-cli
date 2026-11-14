@@ -1,6 +1,6 @@
 # 01 · 项目概述与系统架构
 
-> 状态：`v0.1-plan`（2026-11-14 · 待 Review）
+> 状态：`v0.2-locked`（2026-11-14 · 已锁定技术栈与架构）
 > 索引：[docs/README.md](./README.md)
 > 相关文档：[02-cli-and-protocol.md](./02-cli-and-protocol.md) · [03-state-and-storage.md](./03-state-and-storage.md) · [04-skill-and-workflows.md](./04-skill-and-workflows.md) · [05-implementation-plan.md](./05-implementation-plan.md)
 
@@ -105,16 +105,16 @@
 
 ## 5. 关键架构决策（ADR）与技术栈选型
 
-### ADR-01：实现语言与运行时选型
+### ADR-01：实现语言与运行时选型（已锁定决策 D1）
 
-| 评估维度 | 方案 A：TypeScript + Bun（首选推荐） | 方案 B：Rust |
+| 评估维度 | 方案 A：TypeScript + Bun（**已锁定**） | 方案 B：Rust（已放弃） |
 | --- | --- | --- |
 | **SQLite WAL 读取** | 内置 `bun:sqlite`，零 C 依赖、开箱即用 | 需引入 `rusqlite`（bundled SQLite 编译耗时增加） |
 | **JSON / JSONL 处理** | 原生极速 `JSON.parse` + TS 类型系统天然契合 `transcript.jsonl` | 需维护大量 `serde` 动态字段映射（Antigravity JSONL 字段多且易增量演进） |
 | **文件系统监听** | `fs.watch` / `node:fs` 原生支持 macOS `kqueue`/`FSEvents` | `notify` crate，稳定性同样良好 |
-| **产物分发形式** | `bun build --compile` 输出单一可执行文件 `tg`，无需宿主机依赖 | `cargo build --release` 输出单一原生二进制 |
-| **工程规范与生态对齐** | 与现有个人仓（`clip`/`bogo`/`steed`）`base-ci` 12 槽质量体系、Biome、Vitest/Bun test 完全一致 | 与参考仓库 `herdr-core` 同构，适合极低内存/跨 Windows 分发 |
-| **结论** | **首选推荐**：开发迭代快、JSONL 协议演进韧性强、可直接编译单二进制安装到 `~/.local/bin/tg` | **备选**：若未来强需求 Windows 跨平台或极低内存常驻 daemon 再考虑 |
+| **产物分发形式** | 双形态支持：NPM 包入口 `bin: { "tg": "./dist/index.js", "team-gravity": "./dist/index.js" }` 与 `bun build --compile` 单二进制 `dist/tg` | `cargo build --release` 输出单一原生二进制 |
+| **工程规范与生态对齐** | 与个人仓及 `base-ci` v2026.15 12 槽质量体系、Biome、Vitest/Bun test 完全一致 | 与参考仓库 `herdr-core` 同构，适合极低内存/跨 Windows 分发 |
+| **结论** | **已锁定（D1）**：开发迭代快、JSONL 协议演进韧性强、同时支持 `npm/bunx` 与单二进制安装到 `~/.local/bin/tg` | 仅作架构对照参考 |
 
 ### ADR-02：无常驻自研 Daemon，复用 Antigravity 已有服务
 - 与 `herdr-core` 需要自己维护 PTY holder 和后台 daemon 不同，Antigravity 的 `language_server` 本身已经是宿主机上的常驻后台进程（由 Antigravity IDE 或独立守护进程管理），且所有会话轨迹实时持久化到磁盘。

@@ -10,11 +10,11 @@
 
 | 编号 | 主题 | 状态 | 核心内容摘要 |
 | --- | --- | --- | --- |
-| [01](./01-overview-and-architecture.md) | 项目概述与系统架构 | `v0.1-plan`（2026-11-14） | 核心痛点、`hc` ↔ `tg` 概念映射、Antigravity 本机运行机制、分层架构图与技术栈 ADR |
-| [02](./02-cli-and-protocol.md) | CLI 接口与交互协议 | `v0.1-plan`（2026-11-14） | 完整 `tg` 命令集、寻址体系 `<c>`、TTY/JSON 输出契约、`<tg>` 信封协议与退出码 |
+| [01](./01-overview-and-architecture.md) | 项目概述与系统架构 | `v0.2-locked`（2026-11-14） | 核心痛点、`hc` ↔ `tg` 概念映射、Antigravity 本机运行机制、分层架构图与技术栈 ADR（锁定 TypeScript + Bun） |
+| [02](./02-cli-and-protocol.md) | CLI 接口与交互协议 | `v0.2-locked`（2026-11-14） | 完整 `tg` 命令集、NPM 包名（`team-gravity`）与命令命名决议、寻址体系 `<c>`、TTY/JSON 输出契约与信封协议 |
 | [03](./03-state-and-storage.md) | 状态机、水位线与本地存储 | `v0.1-plan`（2026-11-14） | Observed Facts 五态推导真值表、Turn Watermark 防竞态算法、FSWatcher 引擎与 `state.db` Schema |
 | [04](./04-skill-and-workflows.md) | 内置 Skill 与协同工作流 | `v0.1-plan`（2026-11-14） | `tg --skill` 内置手册全文草案、外部 Bot 派活 / 主控编排 / `hc`+`tg` 双向协同三大流 |
-| [05](./05-implementation-plan.md) | 工程结构、测试隔离与分期计划 | `v0.1-plan`（2026-11-14） | 模块划分、System0 质量体系与 `TG_HOME` 沙箱隔离策略、Phase 0–4 提交规划与待拍板决策表 |
+| [05](./05-implementation-plan.md) | 工程结构、质量体系与实施计划 | `v0.2-locked`（2026-11-14） | 模块划分、System0 12 槽位质量体系（对齐 `base-ci` v2026.15）、`TG_HOME` 沙箱隔离、严格 TDD/DDD 流程与主分支原子提交规划 |
 
 ---
 

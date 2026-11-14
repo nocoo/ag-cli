@@ -1,6 +1,6 @@
 # 02 · CLI 接口与交互协议
 
-> 状态：`v0.1-plan`（2026-11-14 · 待 Review）
+> 状态：`v0.2-locked`（2026-11-14 · 已锁定命名与协议）
 > 索引：[docs/README.md](./README.md)
 > 前置文档：[01-overview-and-architecture.md](./01-overview-and-architecture.md)
 > 详细状态机制：[03-state-and-storage.md](./03-state-and-storage.md)
@@ -50,6 +50,22 @@ Agent? Run: tg --skill
 | `tg read` | 格式化输出 Markdown 回复与 Artifacts 路径 | 仅输出纯净回复正文（方便重定向到文件或管道） | 输出包含 `reply`、`artifacts`、`steps`、`telemetry` 的完整 JSON |
 | `tg ls` / `tg get` / `tg status` / `tg templates` / `tg send` / `tg wait` | 人类可读的紧凑表格或键值摘要 | **自动切换为 JSON**（对齐 `hc` 设计） | 始终输出 JSON |
 | `tg events` | 人类可读的事件时间线 | 逐行输出 JSON Lines（NDJSON） | 逐行输出 JSON Lines（NDJSON） |
+
+### 1.2 NPM 包名与 CLI 命令名实测及决议（D2）
+
+在锁定包名与二进制命令名前，通过项目环境允许的 NPM 镜像（`https://packagefeedproxy.microsoft.io/npm/`）与本机 `PATH` 进行了实测排查：
+
+| 候选名称 | NPM 注册表状态 | 本机 `PATH` 占用 | 说明 |
+| --- | --- | --- | --- |
+| `team-gravity` | **可用（HTTP 404）** | 无冲突 | 与仓库同名，语义直观，全局唯一 |
+| `@nocoo/team-gravity` | **可用（HTTP 404）** | 无冲突 | 个人 Scope 备选包名，同样未占用 |
+| `@nocoo/tg` / `tgrav` / `ag-cli` | **可用（HTTP 404）** | 无冲突 | 备选短包名 |
+| `tg` | **已被占用（HTTP 200）** | 无冲突 | NPM 包名已被第三方占坑，但本机可执行命令完全空闲 |
+| `antigravity-cli` | **已被占用（HTTP 200）** | — | NPM 包名已被占用 |
+
+**已锁定决议（D2）**：
+- **NPM 包名**：使用 `team-gravity`（或个人 Scope 变体 `@nocoo/team-gravity`；`package.json` `"name"` 锁定为 `"team-gravity"`）。
+- **CLI 命令入口**：在 `package.json` `"bin"` 同时暴露短命令 `"tg"`（日常主力命令，对齐 `hc`）与全称别名 `"team-gravity"`：`{ "tg": "./dist/index.js", "team-gravity": "./dist/index.js" }`；单二进制构建默认输出 `dist/tg`。
 
 ---
 
