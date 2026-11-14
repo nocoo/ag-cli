@@ -60,6 +60,18 @@ const SUMMARIES_SCHEMA = `
   );
 `;
 
+// Ambient caller variables leak into subprocess tests when the suite itself runs
+// inside an Antigravity or hc session; e2e runs must neutralize them so target
+// resolution behaves as if the CLI ran from a plain terminal.
+export function isolatedSubprocessEnv(): Record<string, string> {
+  return {
+    HC_TERMINAL_ID: "",
+    AG_CLI_CALLER_ID: "",
+    ANTIGRAVITY_CONVERSATION_ID: "",
+    ANTIGRAVITY_PROJECT_ID: "",
+  };
+}
+
 export function createSandbox(prefix = "ag-cli-test"): Sandbox {
   const root = mkdtempSync(join(tmpdir(), `${prefix}-`));
   const agCliHome = join(root, "ag-cli-home");

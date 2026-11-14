@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createSandbox,
   initSummariesDb,
+  isolatedSubprocessEnv,
   type MockLanguageServer,
   readTranscript,
   type Sandbox,
@@ -32,9 +33,7 @@ async function runCli(
       cwd: outsideCwd,
       env: {
         ...process.env,
-        HC_TERMINAL_ID: "",
-        AG_CLI_CALLER_ID: "",
-        ANTIGRAVITY_CONVERSATION_ID: "",
+        ...isolatedSubprocessEnv(),
         ...instance.env,
         ...env,
       },

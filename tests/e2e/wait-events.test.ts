@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createSandbox,
   initSummariesDb,
+  isolatedSubprocessEnv,
   runAgentapi,
   type Sandbox,
   writeMockAgentapi,
@@ -23,7 +24,7 @@ interface CliSpawn {
 function spawnCli(args: string[], killAfterMs?: number): Promise<CliSpawn> {
   return new Promise((resolve, reject) => {
     const child = spawn("node", [cliBin, ...args], {
-      env: { ...process.env, ...instance.env },
+      env: { ...process.env, ...isolatedSubprocessEnv(), ...instance.env },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";

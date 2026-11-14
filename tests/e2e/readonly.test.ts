@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   createSandbox,
   initSummariesDb,
+  isolatedSubprocessEnv,
   runAgentapi,
   type Sandbox,
   startMockLanguageServer,
@@ -26,7 +27,7 @@ async function runCli(
   try {
     const result = await execFileAsync("node", [cliBin, ...args], {
       encoding: "utf8",
-      env: { ...process.env, ...instance.env, ...env },
+      env: { ...process.env, ...isolatedSubprocessEnv(), ...instance.env, ...env },
     });
     return {
       status: 0,
