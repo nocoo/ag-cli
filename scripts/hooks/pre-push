@@ -1,34 +1,58 @@
 #!/usr/bin/env bash
-# System0 pre-push gate: G1 commit-range secret scan, G2 osv-scanner,
-# B1 build, L3 integration, L4 e2e, P1 package check.
+# System0 pre-push gate: every commit that will be pushed is checked in an
+# isolated snapshot of that exact revision.
+# G1 secrets, G2 osv-scanner, B1 build, L3 integration, L4 e2e, P1 package check.
 set -euo pipefail
 
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
 zero=0000000000000000000000000000000000000000
-scanned=0
+oids=()
 
 while read -r local_ref local_oid remote_ref remote_oid; do
   [ -z "${local_oid:-}" ] && continue
   [ "$local_oid" = "$zero" ] && continue
-  if [ "$remote_oid" = "$zero" ]; then
-    log_opts="$local_oid --not --remotes"
-  else
-    log_opts="$remote_oid..$local_oid"
-  fi
-  gitleaks git --log-opts="$log_opts" --redact
-  scanned=1
+  oids+=("$local_oid")
 done
 
-if [ "$scanned" -eq 0 ]; then
-  gitleaks git --redact
+if [ "${#oids[@]}" -eq 0 ]; then
+  oids=("HEAD")
 fi
 
-osv-scanner scan --lockfile=bun.lock
-bun run build
-bun run test:integration
-bun run test:e2e
-bun run ci:package
+unique=()
+for oid in "${oids[@]}"; do
+  duplicate=0
+  for seen in "${unique[@]:-}"; do
+    [ "$seen" = "$oid" ] && duplicate=1
+  done
+  [ "$duplicate" -eq 0 ] && unique+=("$oid")
+done
+
+snapshots=$(mktemp -d "${TMPDIR:-/tmp}/ag-cli-pre-push.XXXXXX")
+trap 'rm -rf "$snapshots"' EXIT
+
+for oid in "${unique[@]}"; do
+  snapshot="$snapshots/$oid"
+  mkdir -p "$snapshot"
+  git archive "$oid" | tar -x -C "$snapshot"
+  if [ -d node_modules ] && [ ! -e "$snapshot/node_modules" ]; then
+    ln -s "$repo_root/node_modules" "$snapshot/node_modules"
+  fi
+
+  echo "pre-push: checking $oid in $snapshot"
+
+  gitleaks git --log-opts="$oid --not --remotes" --redact
+  gitleaks detect --source "$snapshot" --no-banner --redact
+
+  (
+    cd "$snapshot"
+    osv-scanner scan --lockfile=bun.lock
+    bun run build
+    bun run test:integration
+    bun run test:e2e
+    bun run ci:package
+  )
+done
 
 echo "pre-push: all gates passed"

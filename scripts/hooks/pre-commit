@@ -11,19 +11,18 @@ gitleaks protect --staged --redact
 
 staged_files=$(git diff --cached --name-only --diff-filter=ACMR)
 
-staged_tests=$(printf '%s\n' "$staged_files" | grep -E '(test|spec)\.(ts|tsx|js|mjs)$' || true)
-if [ -n "$staged_tests" ]; then
-  hits=$(printf '%s\n' "$staged_tests" | xargs rg -n '\b(test|it|describe)\.(only|skip)\b' || true)
+snapshot=$(mktemp -d "${TMPDIR:-/tmp}/ag-cli-pre-commit.XXXXXX")
+trap 'rm -rf "$snapshot"' EXIT
+git checkout-index --all --prefix="$snapshot/"
+
+if [ -d "$snapshot/tests" ]; then
+  hits=$(rg -n '\b(test|it|describe)\.(only|skip)\b' "$snapshot/tests" || true)
   if [ -n "$hits" ]; then
-    echo "pre-commit: forbidden .only/.skip in tests:" >&2
+    echo "pre-commit: forbidden .only/.skip in the staged tests:" >&2
     printf '%s\n' "$hits" >&2
     exit 1
   fi
 fi
-
-snapshot=$(mktemp -d "${TMPDIR:-/tmp}/ag-cli-pre-commit.XXXXXX")
-trap 'rm -rf "$snapshot"' EXIT
-git checkout-index --all --prefix="$snapshot/"
 
 if [ -d node_modules ] && [ ! -e "$snapshot/node_modules" ]; then
   ln -s "$repo_root/node_modules" "$snapshot/node_modules"

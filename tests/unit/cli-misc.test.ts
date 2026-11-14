@@ -288,6 +288,13 @@ describe("schema command", () => {
 });
 
 describe("--skill", () => {
+  it("keeps the embedded manual in sync with src/cli/skill.md", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { SKILL_MANUAL } = await import("../../src/cli/skill");
+    const source = readFileSync(join(process.cwd(), "src", "cli", "skill.md"), "utf8").trimEnd();
+    expect(SKILL_MANUAL.trimEnd()).toBe(source);
+  });
+
   it("prints the embedded agent manual", async () => {
     const instance = await prepared();
     for (const args of [["--skill"], ["skill"]]) {

@@ -36,6 +36,12 @@ function main(): void {
   console.log("check-package: running bun run build");
   execFileSync("bun", ["run", "build"], { cwd: repoRoot, stdio: "inherit" });
 
+  const binaryPath = join(repoRoot, "dist", "ag-cli");
+  assert(existsSync(binaryPath), "dist/ag-cli missing: the compiled binary was not built");
+  execFileSync(binaryPath, ["--help"], { cwd: repoRoot, stdio: "inherit" });
+  execFileSync(binaryPath, ["--skill"], { cwd: repoRoot, stdio: "inherit" });
+  console.log("check-package: compiled binary --help and --skill verified");
+
   const packDir = mkdtempSync(join(tmpdir(), "ag-cli-pack-"));
   const installDir = mkdtempSync(join(tmpdir(), "ag-cli-install-"));
   try {
