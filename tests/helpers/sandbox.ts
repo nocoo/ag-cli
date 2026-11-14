@@ -31,7 +31,8 @@ export interface MockLanguageServer {
   server: Server;
   port: number;
   csrfToken: string;
-  requests: Array<{ method: string | undefined; url: string | undefined }>;
+  requests: Array<{ method: string | undefined; url: string | undefined; csrf?: string }>;
+  rpcCalls: Array<{ method: string; body: unknown; csrf?: string }>;
   close(): Promise<void>;
 }
 
@@ -99,16 +100,50 @@ export function writeHubFile(sandbox: Sandbox, info: HubInfo): string {
   return path;
 }
 
-export function startMockLanguageServer(): Promise<MockLanguageServer> {
+export interface MockRpcOptions {
+  responses?: Record<string, unknown | ((body: unknown) => unknown)>;
+  statusCodes?: Record<string, number>;
+}
+
+export function startMockLanguageServer(options: MockRpcOptions = {}): Promise<MockLanguageServer> {
   const requests: MockLanguageServer["requests"] = [];
+  const rpcCalls: MockLanguageServer["rpcCalls"] = [];
   const server = createServer((req, res) => {
-    requests.push({ method: req.method, url: req.url });
     const url = req.url ?? "";
+    const rpcMethod = url.startsWith("/exa.language_server_pb.LanguageServerService/")
+      ? url.slice("/exa.language_server_pb.LanguageServerService/".length)
+      : null;
+    requests.push({
+      method: req.method,
+      url,
+      csrf: req.headers["x-codeium-csrf-token"] as string | undefined,
+    });
     const reply = (status: number, body: unknown) => {
-      req.on("data", () => {});
+      let raw = "";
+      req.on("data", (chunk: Buffer) => {
+        raw += chunk.toString();
+      });
       req.on("end", () => {
+        if (rpcMethod !== null) {
+          let parsed: unknown = null;
+          try {
+            parsed = raw.length > 0 ? JSON.parse(raw) : null;
+          } catch {
+            parsed = raw;
+          }
+          rpcCalls.push({
+            method: rpcMethod,
+            body: parsed,
+            csrf: req.headers["x-codeium-csrf-token"] as string | undefined,
+          });
+        }
+        let payload = body;
+        const configured = rpcMethod === null ? undefined : options.responses?.[rpcMethod];
+        if (typeof configured === "function") {
+          payload = (configured as (body: unknown) => unknown)(raw);
+        }
         res.writeHead(status, { "content-type": "application/json" });
-        res.end(JSON.stringify(body));
+        res.end(JSON.stringify(payload));
       });
     };
 
@@ -116,8 +151,10 @@ export function startMockLanguageServer(): Promise<MockLanguageServer> {
       reply(200, { status: "ok" });
       return;
     }
-    if (url.startsWith("/exa.language_server_pb.LanguageServerService/")) {
-      reply(200, {});
+    if (rpcMethod !== null) {
+      const configured = options.responses?.[rpcMethod];
+      const body = typeof configured === "function" ? null : (configured ?? {});
+      reply(options.statusCodes?.[rpcMethod] ?? 200, body);
       return;
     }
     reply(404, { error: "not_found" });
@@ -135,6 +172,7 @@ export function startMockLanguageServer(): Promise<MockLanguageServer> {
         port: address.port,
         csrfToken: randomUUID(),
         requests,
+        rpcCalls,
         close: () =>
           new Promise<void>((onClosed) => {
             server.close(() => onClosed());
@@ -318,8 +356,16 @@ function main() {
     const id = randomUUID();
     ensureConversation(id);
     db.prepare(
-      "INSERT INTO conversation_summaries (conversation_id, title) VALUES (?, ?)"
-    ).run(id, args.title || "");
+      "INSERT INTO conversation_summaries (conversation_id, title, workspace_uris) VALUES (?, ?, ?)"
+    ).run(
+      id,
+      args.title || "",
+      JSON.stringify({
+        ls: process.env.ANTIGRAVITY_LS_ADDRESS || null,
+        csrf: process.env.ANTIGRAVITY_CSRF_TOKEN || null,
+        project: process.env.ANTIGRAVITY_PROJECT_ID || null,
+      })
+    );
     runTurn(db, id, args.title || "", args.message || "");
     emit({ conversationId: id });
     return;
