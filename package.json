@@ -1,0 +1,32 @@
+{
+  "name": "ag-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "CLI runtime wrapper that dispatches tasks to local Antigravity conversations",
+  "bin": {
+    "ag-cli": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check --error-on-warnings .",
+    "lint:fix": "biome check --write --error-on-warnings .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --project unit --coverage",
+    "test:integration": "vitest run --project integration --passWithNoTests",
+    "test:e2e": "vitest run --project e2e --passWithNoTests",
+    "build": "bun build src/index.ts --target node --banner \"#!/usr/bin/env node\" --outfile dist/index.js",
+    "ci:package": "bun run scripts/check-package.ts",
+    "prepare": "git config core.hooksPath scripts/hooks"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.6",
+    "@types/node": "26.6.6",
+    "@vitest/coverage-v8": "5.1.0",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}
