@@ -1,5 +1,6 @@
 import { type CallerContext, detectCallerContext, wrapOutboundPrompt } from "../../domain/envelope";
 import { resolveTarget } from "../../domain/target-resolver";
+import { loadTemplate, type ParsedTemplate } from "../../domain/template-parser";
 import { maxStepIndex } from "../../domain/transcript-parser";
 import { AgentApiClient } from "../../infra/agentapi-client";
 import { resolvePaths } from "../../infra/paths";
@@ -57,12 +58,13 @@ export async function runRunCommand(
   if (flags.positionals.length === 0) {
     throw new AgCliError("invalid_usage", "run requires a prompt");
   }
+  let prompt = flags.positionals[0] as string;
+  let templateDefaults: ParsedTemplate | undefined;
   if (flags.positionals.length > 1) {
-    throw new AgCliError("not_found", `template ${flags.positionals[0]} not found`, {
-      hint: "Templates land in Phase 4; pass a single prompt for now.",
-    });
+    const templateName = flags.positionals[0] as string;
+    prompt = flags.positionals[1] as string;
+    templateDefaults = loadTemplate(resolvePaths(context.env).configDir, templateName).template;
   }
-  const prompt = flags.positionals[0] as string;
   const name = flags.values.get("name");
   if (flags.flags.has("reuse") && name === undefined) {
     throw new AgCliError("invalid_usage", "--reuse requires --name");
@@ -89,8 +91,8 @@ export async function runRunCommand(
       parentId = caller.conversationId;
     }
 
-    const cwd = flags.values.get("cwd") ?? process.cwd();
-    const model = flags.values.get("model") ?? "flash";
+    const cwd = flags.values.get("cwd") ?? templateDefaults?.cwd ?? process.cwd();
+    const model = flags.values.get("model") ?? templateDefaults?.model ?? "flash";
     const client = await AgentApiClient.connect({
       antigravityDir: paths.antigravityDir,
       agentapiBin: paths.agentapiBin,
@@ -103,7 +105,11 @@ export async function runRunCommand(
       projectId = null;
     }
 
-    const message = wrapOutboundPrompt(prompt, caller, {
+    const combinedPrompt =
+      templateDefaults === undefined || templateDefaults.preamble.length === 0
+        ? prompt
+        : `${templateDefaults.preamble}\n\n${prompt}`;
+    const message = wrapOutboundPrompt(combinedPrompt, caller, {
       cwd,
       noNotify: flags.flags.has("no-notify"),
       raw: flags.flags.has("raw"),
@@ -155,7 +161,7 @@ export async function runRunCommand(
     const created = await client.newConversation({
       message,
       title,
-      profile: flags.values.get("profile"),
+      profile: flags.values.get("profile") ?? templateDefaults?.profile,
     });
     const row = store.registerConversation(created.conversationId, {
       ...(name === undefined ? {} : { name }),

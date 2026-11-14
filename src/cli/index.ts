@@ -8,8 +8,11 @@ import { runReadCommand } from "./commands/read";
 import { runRunCommand } from "./commands/run";
 import { runSendCommand } from "./commands/send";
 import { runStatusCommand } from "./commands/status";
+import { runTemplatesCommand } from "./commands/templates";
 import { runWaitCommand } from "./commands/wait";
-import { emitError, emitText, resolveMode, type StreamLike } from "./format";
+import { emitError, emitJson, emitText, resolveMode, type StreamLike } from "./format";
+import { CLI_SCHEMA } from "./schema";
+import { skillManual } from "./skill";
 
 export interface CliContext {
   stdout: StreamLike;
@@ -45,6 +48,10 @@ Talk & Wait
 More
   status                      Inspect Antigravity daemon, database, and agentapi health
   events                      Follow state and step changes live (JSON Lines when piped)
+  templates                   List templates (~/.config/ag-cli/templates)
+  schema                      Print the CLI/API JSON Schema
+
+Run ag-cli --skill for the embedded agent manual.
 
 <c> is a target like c7, a name (clip-worker), a UUID prefix, or a full UUID.
 Piped output is JSON except run (text summary) and read (Markdown reply).
@@ -99,12 +106,23 @@ export async function runCli(argv: string[], context: CliContext): Promise<numbe
       emitText(context.stdout, USAGE);
       return 0;
     }
+    if (command === "--skill" || command === "skill") {
+      emitText(context.stdout, skillManual());
+      return 0;
+    }
+    if (command === "schema") {
+      emitJson(context.stdout, CLI_SCHEMA);
+      return 0;
+    }
     if (command === undefined) {
       emitText(context.stderr, USAGE);
       return 2;
     }
     if (command === "status" || command === "doctor") {
       return await runStatusCommand(args, context);
+    }
+    if (command === "templates") {
+      return await runTemplatesCommand(args, context);
     }
     if (command === "ls") {
       return await runLsCommand(args, context);

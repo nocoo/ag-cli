@@ -150,7 +150,7 @@ describe("fs.watch wiring", () => {
       antigravityDir: instance.antigravityDir,
       conversationId: CONVERSATION,
       debounceMs: 200,
-      fallbackMs: 10_000,
+      fallbackMs: 2000,
       onChange: () => {
         calls += 1;
       },

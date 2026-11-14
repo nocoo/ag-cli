@@ -74,7 +74,11 @@ function main(): void {
         cwd: installDir,
         stdio: "inherit",
       });
-      console.log("check-package: installed bin shebang and --help invocation verified");
+      execFileSync(join(installDir, "node_modules/.bin/ag-cli"), ["--skill"], {
+        cwd: installDir,
+        stdio: "inherit",
+      });
+      console.log("check-package: installed bin shebang, --help and --skill verified");
     } else {
       console.log("check-package: dist/index.js not produced yet, skipping bin checks");
     }

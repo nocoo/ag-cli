@@ -197,6 +197,15 @@ describe("priority 5: idle (docs/03 §2)", () => {
     expect(deriveConversationStatus(facts())).toBe("idle");
   });
 
+  it("treats typeless steps after an error as non-recovering", () => {
+    const steps = [
+      step({ step_index: 0, type: "USER_INPUT" }),
+      step({ step_index: 1, status: "ERROR" }),
+      { step_index: 2 } as TranscriptStep,
+    ];
+    expect(deriveConversationStatus(facts({ summary: IDLE, steps }))).toBe("error");
+  });
+
   it("treats typeless steps as non-inbound in error recovery and reply scans", () => {
     const errorSteps = [
       step({ step_index: 0, type: "USER_INPUT" }),

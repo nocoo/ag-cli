@@ -16,9 +16,9 @@
     "lint:fix": "biome check --write --error-on-warnings .",
     "test": "vitest run",
     "test:coverage": "vitest run --project unit --coverage",
-    "test:integration": "vitest run --project integration --passWithNoTests",
-    "test:e2e": "vitest run --project e2e --passWithNoTests",
-    "build": "bun build src/index.ts --target node --banner \"#!/usr/bin/env node\" --outfile dist/index.js",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "vitest run --project e2e",
+    "build": "bun build src/index.ts --target node --banner \"#!/usr/bin/env node\" --outfile dist/index.js && cp src/cli/skill.md dist/skill.md",
     "ci:package": "bun run scripts/check-package.ts",
     "prepare": "git config core.hooksPath scripts/hooks"
   },

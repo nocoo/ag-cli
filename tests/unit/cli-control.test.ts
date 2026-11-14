@@ -53,11 +53,12 @@ function stdoutJson<T>(ctx: CliContext): T {
 
 async function prepared(
   responses: Record<string, unknown> = {},
+  statusCodes: Record<string, number> = {},
 ): Promise<{ instance: Sandbox; server: MockLanguageServer }> {
   const instance = sandbox();
   initSummariesDb(instance);
   writeMockAgentapi(instance);
-  const server = await startMockLanguageServer({ responses });
+  const server = await startMockLanguageServer({ responses, statusCodes });
   servers.push(server);
   writeHubFile(instance, {
     pid: process.pid,
@@ -205,6 +206,32 @@ describe("run command", () => {
     expect((steps[3] as { content?: string })?.content).toBe("second");
   });
 
+  it("fills reuse summaries from current flags for sparsely registered rows", async () => {
+    const { instance } = await prepared();
+    const runCtx = context(false, instance.env);
+    await runCli(["run", "--bg", "--json", "--name", "sparse", "first"], runCtx);
+    const conversationId = stdoutJson<{ conversationId: string }>(runCtx).conversationId;
+
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    store.rawExec(
+      "UPDATE conversations SET cwd = NULL, model = NULL WHERE conversation_id = ?",
+      conversationId,
+    );
+    store.close();
+
+    const reuseCtx = context(false, { ...instance.env, AG_MOCK_AGENTAPI_MODE: "stuck" });
+    const code = await runCli(
+      ["run", "--bg", "--json", "--reuse", "--name", "sparse", "--cwd", "/tmp/current", "second"],
+      reuseCtx,
+    );
+    expect(code).toBe(0);
+    expect(stdoutJson<{ model: string; cwd: string; title: string }>(reuseCtx)).toMatchObject({
+      model: "flash",
+      cwd: "/tmp/current",
+      title: "sparse",
+    });
+  });
+
   it("creates the conversation when --reuse finds no active name", async () => {
     const { instance } = await prepared();
     const ctx = context(false, instance.env);
@@ -266,10 +293,7 @@ describe("run command", () => {
   });
 
   it("tolerates project resolution failures", async () => {
-    const { instance } = await prepared({
-      responses: { ListProjects: {} },
-      statusCodes: { ListProjects: 500 },
-    });
+    const { instance } = await prepared({ ListProjects: {} }, { ListProjects: 500 });
     const ctx = context(false, instance.env);
     const code = await runCli(["run", "--bg", "--json", "--cwd", "/nope", "task"], ctx);
     expect(code).toBe(0);
