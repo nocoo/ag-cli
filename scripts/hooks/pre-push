@@ -32,6 +32,52 @@ done
 snapshots=$(mktemp -d "${TMPDIR:-/tmp}/ag-cli-pre-push.XXXXXX")
 trap 'rm -rf "$snapshots"' EXIT
 
+verify_installed_versions() {
+  local lockfile="$1"
+  local root="$2"
+  [ -f "$lockfile" ] || return 1
+  node -e '
+    const fs = require("node:fs");
+    const raw = fs.readFileSync(process.argv[1], "utf8");
+    // bun.lock is JSON with trailing commas; normalize before strict parsing
+    const lock = JSON.parse(raw.replace(/,(\s*[}\]])/g, "$1"));
+    const root = process.argv[2];
+    const packages = lock.packages ?? {};
+    const workspace = lock.workspaces?.[""] ?? {};
+    const direct = new Set([
+      ...Object.keys(workspace.dependencies ?? {}),
+      ...Object.keys(workspace.devDependencies ?? {}),
+    ]);
+    const problems = [];
+    for (const [name, entry] of Object.entries(packages)) {
+      const first = Array.isArray(entry) ? entry[0] : undefined;
+      if (typeof first !== "string") continue;
+      const at = first.lastIndexOf("@");
+      const version = at > 0 ? first.slice(at + 1) : "";
+      if (!/^\d/.test(version)) continue;
+      const manifest = `${root}/node_modules/${name}/package.json`;
+      let installed;
+      try {
+        installed = JSON.parse(fs.readFileSync(manifest, "utf8")).version;
+      } catch {
+        // optional platform binaries are only installed for the current os;
+        // a missing direct dependency is still a provenance failure
+        if (direct.has(name)) {
+          problems.push(`${name}: missing ${manifest}`);
+        }
+        continue;
+      }
+      if (installed !== version) {
+        problems.push(`${name}: lock ${version} vs installed ${installed}`);
+      }
+    }
+    if (problems.length > 0) {
+      console.error(problems.join("\n"));
+      process.exit(1);
+    }
+  ' "$lockfile" "$root"
+}
+
 for oid in "${unique[@]}"; do
   snapshot="$snapshots/$oid"
   mkdir -p "$snapshot"
@@ -43,10 +89,11 @@ for oid in "${unique[@]}"; do
     snap_pkg=$(shasum "$snapshot/package.json" 2>/dev/null | cut -d' ' -f1 || true)
     snap_lock=$(shasum "$snapshot/bun.lock" 2>/dev/null | cut -d' ' -f1 || true)
     if [ -n "$root_pkg" ] && [ -n "$root_lock" ] && \
-       [ "$root_pkg" = "$snap_pkg" ] && [ "$root_lock" = "$snap_lock" ]; then
+       [ "$root_pkg" = "$snap_pkg" ] && [ "$root_lock" = "$snap_lock" ] && \
+       verify_installed_versions "$snapshot/bun.lock" "$repo_root"; then
       ln -s "$repo_root/node_modules" "$snapshot/node_modules"
     else
-      echo "pre-push: snapshot deps differ from the worktree; installing in snapshot" >&2
+      echo "pre-push: snapshot deps differ from the worktree install; installing in snapshot" >&2
       (
         cd "$snapshot"
         BUN_CONFIG_REGISTRY=https://registry.npmmirror.com/ bun install --frozen-lockfile

@@ -163,3 +163,55 @@ inside the packed tarball; `scripts/check-package.ts` smoke-tests it after insta
   `$ref`s instead of following JSON pointers; hook scans ran gitleaks in git mode
   against a sourceless archive and trivially passed. Tests now validate real command
   output against `$defs` and the archive scan uses `--no-git`.
+
+## 2026-11-14 · Round 3 review lessons (ag-cli-reviewer, 12 findings)
+
+- **Per-row sequence numbers cannot prove ownership.** `delivery_seq` reset to 1
+  whenever a conversation row was deleted and recreated, so an old ticket could
+  roll back a stranger's new row (ABA); two concurrent failures also left the
+  later delivery's pending watermark as the "previous" state. Ownership now comes
+  from a global monotonic sequence in `store_meta` plus an in-flight
+  `delivery_tickets` ledger; rollback passes previous-state ownership forward to
+  the next pending ticket instead of guessing from the current row.
+- **Never proceed past a failed lock acquisition.** `run --reuse` treated a
+  reservation wait timeout as "go ahead and create", duplicating the in-flight
+  dispatch. Acquire-or-conflict is now a hard gate before `newConversation`, and
+  reservations carry a TTL so crashed processes self-heal.
+- **Startup code needs the same cleanup boundary as steady state.** events kept
+  creating heartbeat timers after the initial observation rejected, and children
+  waits started fallback timers before `tick` existed (a TDZ crash when EISDIR
+  aborted init). Initialization now runs inside the guarded cleanup region, and
+  late-bound callbacks get a safe default binding.
+- **WAL commits do not touch the main file's mtime.** A `state.db` write commits
+  into `-wal` while the watcher only stat'ed the main file, so terminations were
+  invisible until the deadline. The watcher keeps a long-lived query-only probe
+  connection and polls `PRAGMA data_version` for the state database just like it
+  always did for summaries.
+- **Exclusion sets must not swallow valid relations.** Excluding "all managed
+  ids" from the summaries scan also excluded active native children that were
+  adopted without a local parent id; only terminated/killed ids belong in the
+  exclusion set, and a missing local parent falls back to the summary relation.
+- **A pending question is not answered by any later DONE.** Tool-level `WAITING`
+  (ask_question) and step-level `WAITING` need different resolution facts: a
+  question clears only via a matching resolved tool call (same id/name) or a new
+  inbound message, never via an unrelated completed step.
+- **Rewrites must reset event counters, not just caches.** The watcher rebuilt its
+  step cache on rewrite but events kept accumulating `inboundCount`, reporting a
+  rewritten turn 0 as `turn: 2`. A generation counter on the watcher now resets
+  per-conversation baselines when the transcript is rebuilt.
+- **No-change notifications must cost zero reads.** The prefix-hash check scanned
+  the whole consumed history on every notification. An unchanged-stat fast return
+  plus an append-only fast path (with malformed-line fallback to the verified
+  rebuild) keeps history I/O at zero for the steady state.
+- **Schema must cover every legal output.** `run --json --timeout` legitimately
+  emits `reason`/`timedOut`/`durationMs` while `runSummary` declared
+  `additionalProperties: false` — guaranteed self-violation. Timeout outputs are
+  now validated against the schema with an exact exit-code assertion.
+- **Manifest equality is not install provenance.** Matching package/lockfile
+  hashes said nothing about the installed bits; a tampered `node_modules/<pkg>`
+  passed the link check. Hooks now verify installed versions against `bun.lock`
+  (bun.lock's trailing-comma JSON needs normalizing) and only excuse missing
+  manifests for non-direct optional platform packages.
+- **One broken hub file must not abort discovery.** An out-of-range port made
+  `http.request` throw synchronously and killed the whole scan. Ports are range
+  validated at parse time and the probe wraps construction failures into `false`.
