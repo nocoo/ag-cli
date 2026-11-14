@@ -52,12 +52,7 @@ export async function runWaitCommand(
           },
         );
       }
-      let ownerId: string;
-      try {
-        ownerId = resolveTarget(owner, registry, { callerId }).conversationId;
-      } catch {
-        ownerId = owner.trim();
-      }
+      const ownerId = resolveOwnerId(owner, registry, callerId);
       const outcome = await waitForChildren({
         paths,
         reader,
@@ -114,7 +109,7 @@ export interface WaitResult {
   durationMs: number;
   target: {
     conversationId: string;
-    shortId: number | null;
+    shortId: string | null;
     name: string | null;
     status: string;
     turn: number;
@@ -123,7 +118,7 @@ export interface WaitResult {
   latestReplyPreview: string;
   children: Array<{
     conversationId: string;
-    shortId: number | null;
+    shortId: string | null;
     name: string | null;
     status: string;
   }>;
@@ -139,7 +134,7 @@ function toTargetSummary(
 ): WaitResult["target"] {
   return {
     conversationId,
-    shortId: shortId ?? null,
+    shortId: shortId === undefined ? null : `c${shortId}`,
     name: name ?? null,
     status,
     turn,
@@ -159,19 +154,48 @@ function findChildren(
 ): ChildCandidate[] {
   const children: ChildCandidate[] = [];
   const seen = new Set<string>();
+  const killed = new Set(
+    (reader?.listConversations() ?? [])
+      .filter((row) => row.killed === 1)
+      .map((row) => row.conversation_id),
+  );
   for (const row of store?.listManaged() ?? []) {
+    if (row.terminated === 1 || killed.has(row.conversationId)) {
+      continue;
+    }
     if (row.parentId === ownerId && !seen.has(row.conversationId)) {
       seen.add(row.conversationId);
       children.push({ conversationId: row.conversationId });
     }
   }
   for (const row of reader?.listConversations() ?? []) {
+    if (row.killed === 1) {
+      continue;
+    }
     if (row.parent_conversation_id === ownerId && !seen.has(row.conversation_id)) {
       seen.add(row.conversation_id);
       children.push({ conversationId: row.conversation_id, summary: row });
     }
   }
   return children;
+}
+
+const HC_OWNER_RE = /^hc:[A-Za-z0-9._-]+$/;
+
+function resolveOwnerId(
+  owner: string,
+  registry: ReturnType<typeof buildTargetRegistry>,
+  callerId: string | undefined,
+): string {
+  const trimmed = owner.trim();
+  try {
+    return resolveTarget(trimmed, registry, { callerId }).conversationId;
+  } catch (error) {
+    if (HC_OWNER_RE.test(trimmed)) {
+      return trimmed;
+    }
+    throw error;
+  }
 }
 
 async function waitForChildren(options: {
@@ -198,7 +222,10 @@ async function waitForChildren(options: {
       );
       return {
         conversationId: child.conversationId,
-        shortId: observation.managed?.shortId ?? null,
+        shortId:
+          observation.managed === undefined || observation.managed === null
+            ? null
+            : `c${observation.managed.shortId}`,
         name: observation.managed?.name ?? null,
         status: observation.status as string,
       };
@@ -283,7 +310,9 @@ async function waitForChildren(options: {
     }
 
     const finish = (result: WaitResult): void => {
-      clearTimeout(deadlineTimer);
+      if (deadlineTimer !== undefined) {
+        clearTimeout(deadlineTimer);
+      }
       for (const watcher of watchers) {
         watcher.close();
       }
@@ -305,15 +334,19 @@ async function waitForChildren(options: {
         decidedId === undefined
           ? summary.target
           : summary.children.find((child) => child.conversationId === decidedId);
-      const status = decidedChild?.status ?? "done";
+      const rawStatus = decidedChild?.status ?? "done";
+      const status = rawStatus === "idle" ? "done" : rawStatus;
       const target =
         decidedChild === undefined ? summary.target : { ...summary.target, ...decidedChild };
       finish({ ...summary, reason: status, timedOut: false, target });
     };
 
-    const deadlineTimer = setTimeout(() => {
-      finish(summarize());
-    }, options.timeoutSec * 1000);
+    const deadlineTimer =
+      options.timeoutSec > 0
+        ? setTimeout(() => {
+            finish(summarize());
+          }, options.timeoutSec * 1000)
+        : undefined;
     tick();
   });
 }
@@ -332,7 +365,7 @@ function emitWaitResult(
   const label =
     result.target.shortId === null
       ? result.target.conversationId.slice(0, 8)
-      : `c${result.target.shortId}${result.target.name === null ? "" : ` (${result.target.name})`}`;
+      : `${result.target.shortId}${result.target.name === null ? "" : ` (${result.target.name})`}`;
   const lines = [
     `${label} · ${result.reason} · ${(result.durationMs / 1000).toFixed(1)}s${timedOut ? " (timeout)" : ""}`,
   ];

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CliContext, runCli } from "../../src/cli/index";
@@ -7,6 +7,7 @@ import {
   createSandbox,
   initSummariesDb,
   type MockLanguageServer,
+  readMockAgentapiCalls,
   readTranscript,
   runAgentapi,
   type Sandbox,
@@ -100,7 +101,7 @@ describe("run command", () => {
     );
     expect(code).toBe(0);
     const payload = stdoutJson<{
-      shortId: number;
+      shortId: string;
       conversationId: string;
       name: string;
       title: string;
@@ -110,7 +111,7 @@ describe("run command", () => {
       watermarkStep: number;
     }>(ctx);
     expect(payload).toMatchObject({
-      shortId: 1,
+      shortId: "c1",
       name: "deps-clip",
       title: "deps-clip",
       reused: false,
@@ -239,9 +240,9 @@ describe("run command", () => {
     const { instance } = await prepared();
     const ctx = context(false, instance.env);
     await runCli(["run", "--bg", "--json", "--reuse", "--name", "fresh", "task"], ctx);
-    expect(stdoutJson<{ reused: boolean; shortId: number }>(ctx)).toMatchObject({
+    expect(stdoutJson<{ reused: boolean; shortId: string | null }>(ctx)).toMatchObject({
       reused: false,
-      shortId: 1,
+      shortId: "c1",
     });
   });
 
@@ -303,11 +304,129 @@ describe("run command", () => {
     expect(stdoutJson<{ projectId: string | null }>(ctx).projectId).toBeNull();
   });
 
-  it("derives no parent for hc terminal callers", async () => {
+  it("binds hc terminal callers as parents unless --no-parent is given", async () => {
     const { instance } = await prepared();
     const ctx = context(false, { ...instance.env, HC_TERMINAL_ID: "t3" });
     await runCli(["run", "--bg", "--json", "hc task"], ctx);
-    expect(stdoutJson<{ parentId: string | null }>(ctx).parentId).toBeNull();
+    expect(stdoutJson<{ parentId: string | null }>(ctx).parentId).toBe("hc:t3");
+
+    const solo = context(false, { ...instance.env, HC_TERMINAL_ID: "t3" });
+    await runCli(["run", "--bg", "--json", "--no-parent", "solo task"], solo);
+    expect(stdoutJson<{ parentId: string | null }>(solo).parentId).toBeNull();
+  });
+
+  it("validates all run arguments before dispatching anything", async () => {
+    const { instance } = await prepared();
+    const before = readTranscript(instance, "00000000-0000-4000-8000-000000000000").length;
+
+    const badName = context(false, instance.env);
+    expect(await runCli(["run", "--bg", "--json", "--name", "C1", "task"], badName)).toBe(2);
+
+    const badLabel = context(false, instance.env);
+    expect(await runCli(["run", "--bg", "--json", "--label", "broken", "task"], badLabel)).toBe(2);
+
+    const tooMany = context(false, instance.env);
+    expect(await runCli(["run", "--bg", "--json", "a", "b", "c"], tooMany)).toBe(2);
+
+    const negativeTimeout = context(false, instance.env);
+    expect(
+      await runCli(["run", "--bg", "--json", "--timeout", "-1", "task"], negativeTimeout),
+    ).toBe(2);
+
+    const calls = readMockAgentapiCalls(instance);
+    expect(calls.filter((call) => call.command === "new-conversation")).toHaveLength(0);
+    expect(before).toBe(0);
+  });
+
+  it("records hc terminal parents for hc callers", async () => {
+    const { instance } = await prepared();
+    const ctx = context(false, { ...instance.env, HC_TERMINAL_ID: "t7" });
+    await runCli(["run", "--bg", "--json", "hc task"], ctx);
+    const conversationId = stdoutJson<{ conversationId: string }>(ctx).conversationId;
+
+    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    expect(store?.findByConversationId(conversationId)?.parentId).toBe("hc:t7");
+    store?.close();
+  });
+
+  it("does not reuse conversations killed upstream", async () => {
+    const { instance } = await prepared();
+    const first = context(false, instance.env);
+    await runCli(["run", "--bg", "--json", "--name", "upstream-dead", "first"], first);
+    const oldId = stdoutJson<{ conversationId: string }>(first).conversationId;
+    const db = initSummariesDb(instance);
+    db.prepare("UPDATE conversation_summaries SET killed = 1 WHERE conversation_id = ?").run(oldId);
+    db.close();
+
+    const second = context(false, instance.env);
+    const code = await runCli(
+      ["run", "--bg", "--json", "--reuse", "--name", "upstream-dead", "second"],
+      second,
+    );
+    expect(code).toBe(0);
+    const payload = stdoutJson<{ conversationId: string; reused: boolean; shortId: string | null }>(
+      second,
+    );
+    expect(payload.reused).toBe(false);
+    expect(payload.conversationId).not.toBe(oldId);
+    expect(payload.shortId).not.toBe("c1");
+
+    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    expect(store?.findByConversationId(oldId)?.terminated).toBe(1);
+    store?.close();
+  });
+
+  it("applies labels and titles when reusing", async () => {
+    const { instance } = await prepared();
+    const first = context(false, instance.env);
+    await runCli(["run", "--bg", "--json", "--name", "relabel", "first"], first);
+    const conversationId = stdoutJson<{ conversationId: string }>(first).conversationId;
+
+    const second = context(false, instance.env);
+    await runCli(
+      [
+        "run",
+        "--bg",
+        "--json",
+        "--reuse",
+        "--name",
+        "relabel",
+        "--label",
+        "reuse=yes",
+        "--title",
+        "second title",
+        "second",
+      ],
+      second,
+    );
+    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    expect(store?.listLabels(conversationId)).toEqual([{ key: "reuse", value: "yes" }]);
+    store?.close();
+    expect(readMockAgentapiCalls(instance).some((call) => call.args.includes("--title"))).toBe(
+      true,
+    );
+  });
+
+  it("rolls back the watermark when delivery fails", async () => {
+    const { instance } = await prepared();
+    const runCtx = context(false, instance.env);
+    await runCli(["run", "--bg", "--json", "--name", "fragile", "first"], runCtx);
+    const conversationId = stdoutJson<{ conversationId: string }>(runCtx).conversationId;
+
+    const failing = context(false, {
+      ...instance.env,
+      AG_CLI_AGENTAPI_BIN: join(instance.root, "missing-bin"),
+    });
+    const code = await runCli(["send", "fragile", "will fail"], failing);
+    expect(code).toBe(4);
+
+    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    expect(store?.findByConversationId(conversationId)?.watermarkStep).toBe(0);
+    store?.close();
+
+    const getCtx = context(false, instance.env);
+    await runCli(["get", "fragile", "--json"], getCtx);
+    expect(stdoutJson<{ status: string }>(getCtx).status).toBe("done");
   });
 
   it("rejects two positionals until templates ship", async () => {
@@ -348,16 +467,25 @@ describe("run command", () => {
 
     const syncCtx = context(false, { ...instance.env, AG_MOCK_AGENTAPI_MODE: "stuck" });
     const syncCode = await runCli(
-      ["run", "--reuse", "--name", "stuck-runner", "--timeout", "1", "still slow"],
+      ["run", "--reuse", "--json", "--name", "stuck-runner", "--timeout", "1", "still slow"],
       syncCtx,
     );
     expect(syncCode).toBe(124);
-    expect(stdoutText(syncCtx) + stderrText(syncCtx)).toContain("still working");
+    expect(stdoutJson<{ reason: string; timedOut: boolean }>(syncCtx)).toMatchObject({
+      reason: "timeout",
+      timedOut: true,
+    });
 
     const waitCtx = context(false, { ...instance.env, AG_MOCK_AGENTAPI_MODE: "stuck" });
-    const waitCode = await runCli(["send", "--wait", "--timeout", "1", "c1", "nudge"], waitCtx);
+    const waitCode = await runCli(
+      ["send", "--wait", "--json", "--timeout", "1", "c1", "nudge"],
+      waitCtx,
+    );
     expect(waitCode).toBe(124);
-    expect(stdoutText(waitCtx) + stderrText(waitCtx)).toContain("still working");
+    expect(stdoutJson<{ reason: string; timedOut: boolean }>(waitCtx)).toMatchObject({
+      reason: "timeout",
+      timedOut: true,
+    });
   }, 20000);
 });
 
@@ -374,13 +502,13 @@ describe("send command", () => {
     expect(
       stdoutJson<{
         conversationId: string;
-        shortId: number;
+        shortId: string;
         watermarkStep: number;
         queued: boolean;
       }>(ctx),
     ).toMatchObject({
       conversationId,
-      shortId: 1,
+      shortId: "c1",
       watermarkStep: 3,
       queued: false,
     });
@@ -526,6 +654,36 @@ describe("send command", () => {
     expect(await runCli(["send", stuckId, "queued text"], tty)).toBe(0);
     expect(stdoutText(tty)).toContain("sent to c1 · watermark 1 · queued");
   });
+
+  it("removes auto-registered rows when an unmanaged send fails", async () => {
+    const { instance } = await prepared();
+    const created = runAgentapi(instance, ["new-conversation", "--message", "outside"]);
+    const outsideId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
+
+    const failing = context(false, {
+      ...instance.env,
+      AG_CLI_AGENTAPI_BIN: join(instance.root, "missing-bin"),
+    });
+    expect(await runCli(["send", outsideId, "fail"], failing)).toBe(4);
+
+    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    expect(store?.findByConversationId(outsideId)).toBeUndefined();
+    store?.close();
+  });
+
+  it("renders tty timeouts for nameless runs and sends", async () => {
+    const { instance } = await prepared();
+    const env = { ...instance.env, AG_MOCK_AGENTAPI_MODE: "stuck" };
+    const runCtx = context(true, env);
+    const code = await runCli(["run", "--timeout", "1", "slow task"], runCtx);
+    expect(code).toBe(124);
+    const text = stderrText(runCtx);
+    expect(text).toContain("still working as c1");
+
+    const sendCtx = context(true, env);
+    expect(await runCli(["send", "--wait", "--timeout", "1", "c1", "nudge"], sendCtx)).toBe(124);
+    expect(stderrText(sendCtx)).toContain("still working");
+  }, 15000);
 
   it("waits for turn completion with --wait", async () => {
     const { instance } = await prepared();
@@ -723,6 +881,30 @@ describe("control commands", () => {
         "utf8",
       ),
     ).toContain("one");
+    store?.close();
+  });
+
+  it("refuses --purge-brain when the brain path escapes its root", async () => {
+    const { instance } = await prepared();
+    const runCtx = context(false, instance.env);
+    await runCli(["run", "--bg", "--json", "--name", "sneaky", "task"], runCtx);
+    const conversationId = stdoutJson<{ conversationId: string }>(runCtx).conversationId;
+
+    const outside = join(instance.root, "outside-target");
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, "keep.txt"), "keep");
+    const brainPath = join(instance.brainDir, conversationId);
+    rmSync(brainPath, { recursive: true, force: true });
+    symlinkSync(outside, brainPath);
+
+    const ctx = context(false, instance.env);
+    const code = await runCli(["rm", "--purge-brain", "sneaky"], ctx);
+    expect(code).toBe(2);
+    expect(JSON.parse(stderrText(ctx))).toMatchObject({ error: { kind: "invalid_usage" } });
+    expect(existsSync(join(outside, "keep.txt"))).toBe(true);
+
+    const store = StateStore.open(join(instance.agCliHome, "state.db"));
+    expect(store?.findByConversationId(conversationId)).toBeDefined();
     store?.close();
   });
 

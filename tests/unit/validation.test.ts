@@ -74,6 +74,23 @@ describe("alias validation", () => {
   });
 });
 
+describe("path safety", () => {
+  it("accepts paths inside the root and rejects escapes", async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { assertInside } = await import("../../src/infra/path-safety");
+    const root = mkdtempSync(join(tmpdir(), "safety-"));
+    mkdirSync(join(root, "nested"));
+    writeFileSync(join(root, "nested", "file.txt"), "x");
+
+    expect(assertInside(root, root)).toBeTruthy();
+    expect(assertInside(root, join(root, "nested", "file.txt"))).toBeTruthy();
+    expect(() => assertInside(root, join(root, "nested", "missing.txt"))).not.toThrow();
+    expect(() => assertInside(root, join(root, "..", "escape.txt"))).toThrow();
+  });
+});
+
 describe("terminal id validation", () => {
   it("accepts simple terminal ids and rejects unsafe ones", () => {
     expect(TERMINAL_ID_RE.test("t7")).toBe(true);

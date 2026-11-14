@@ -1,7 +1,9 @@
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { resolveTarget } from "../../domain/target-resolver";
+import { assertUuid } from "../../domain/validation";
 import { AgentApiClient } from "../../infra/agentapi-client";
+import { assertInside } from "../../infra/path-safety";
 import { resolvePaths } from "../../infra/paths";
 import { StateStore } from "../../infra/state-store";
 import { openSummariesReader } from "../../infra/summaries-reader";
@@ -64,16 +66,21 @@ export async function runControlCommand(
       return 0;
     }
 
+    assertUuid(conversationId);
     const row = store.findByConversationId(conversationId);
     if (row === undefined) {
       throw new AgCliError("not_found", `conversation ${conversationId} is not managed by ag-cli`, {
         hint: "Only ag-cli-registered conversations can be removed.",
       });
     }
+    const brainTarget = join(paths.brainDir, conversationId);
+    if (flags.flags.has("purge-brain") && existsSync(brainTarget)) {
+      assertInside(paths.brainDir, brainTarget, "Brain artifacts must stay inside the brain root.");
+    }
     store.removeConversation(conversationId);
     let purgedBrain = false;
     if (flags.flags.has("purge-brain")) {
-      rmSync(join(paths.brainDir, conversationId), { recursive: true, force: true });
+      rmSync(brainTarget, { recursive: true, force: true });
       purgedBrain = true;
     }
     emitControlResult(context, flags.flags.has("json"), {

@@ -57,6 +57,11 @@ describe("wait against the live mock stack", () => {
     const store = StateStore.open(paths.stateDbPath, { create: true });
     store.registerConversation(child, { name: "live-child", parentId: parent });
     store.close();
+    const ownerDb = initSummariesDb(instance);
+    ownerDb
+      .prepare("INSERT INTO conversation_summaries (conversation_id, title) VALUES (?, ?)")
+      .run(parent, "owner");
+    ownerDb.close();
 
     const ctx = context({ ...instance.env, AG_CLI_CALLER_ID: parent });
     const waitPromise = runCli(["wait", "--children", "any", "--json", "--timeout", "10"], ctx);

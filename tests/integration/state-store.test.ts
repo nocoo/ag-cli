@@ -54,6 +54,24 @@ describe("StateStore under real sqlite", () => {
     }
   });
 
+  it("restores watermarks only when the expected value matches", () => {
+    const instance = sandbox();
+    const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
+    try {
+      store.registerConversation(UUID_A, {});
+      store.updateWatermark(UUID_A, 5);
+      store.restoreWatermark(UUID_A, 5, 2);
+      expect(store.findByConversationId(UUID_A)?.watermarkStep).toBe(2);
+      store.restoreWatermark(UUID_A, 5, 9);
+      expect(store.findByConversationId(UUID_A)?.watermarkStep).toBe(2);
+      store.setLastTurn(UUID_A, 4);
+      store.setLastTurn(UUID_A, 4);
+      expect(store.findByConversationId(UUID_A)?.lastTurn).toBe(4);
+    } finally {
+      store?.close();
+    }
+  });
+
   it("persists across reopen alongside the summaries database", () => {
     const instance = sandbox();
     initSummariesDb(instance);

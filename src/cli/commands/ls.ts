@@ -7,8 +7,8 @@ import { parseCommandFlags } from "../index";
 import { type ConversationObservation, currentCallerId, observeConversation } from "./registry";
 
 export interface LsRow {
-  shortId: string;
-  name: string;
+  shortId: string | null;
+  name: string | null;
   conversationId: string;
   status: string;
   turn: number;
@@ -93,6 +93,15 @@ export async function runLsCommand(
     }
 
     const statusFilter = flags.values.get("status");
+    if (
+      statusFilter !== undefined &&
+      !["idle", "working", "done", "blocked", "error"].includes(statusFilter)
+    ) {
+      throw new AgCliError(
+        "invalid_usage",
+        `--status expects idle|working|done|blocked|error, got ${statusFilter}`,
+      );
+    }
     const rowsOut: LsRow[] = [];
     for (const candidate of candidates) {
       const observation = observeConversation(paths, reader, candidate.conversationId, store);
@@ -136,8 +145,8 @@ export async function runLsCommand(
         renderTable(
           ["SHORT", "NAME", "STATUS", "TURN", "STEPS", "TITLE", "PROJECT/CWD", "UPDATED"],
           rowsOut.map((row) => [
-            row.shortId,
-            row.name,
+            row.shortId ?? "-",
+            row.name ?? "-",
             row.status,
             String(row.turn),
             String(row.stepCount),
@@ -165,8 +174,8 @@ function toLsRow(
   const summarySteps = candidate.summary?.step_count ?? 0;
   const workspace = candidate.summary === undefined ? "" : firstWorkspace(candidate.summary);
   return {
-    shortId: managed === undefined ? "-" : `c${managed.shortId}`,
-    name: managed?.name ?? "-",
+    shortId: managed === undefined ? null : `c${managed.shortId}`,
+    name: managed?.name ?? null,
     conversationId: candidate.conversationId,
     status: observation.status,
     turn: observation.turns.length,

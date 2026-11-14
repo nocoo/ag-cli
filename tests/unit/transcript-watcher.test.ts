@@ -306,6 +306,32 @@ describe("fallback stat and data_version checks", () => {
   });
 });
 
+describe("state database notifications", () => {
+  it("reports state db changes through the fallback timer", async () => {
+    const instance = sandbox();
+    const { join: joinPath } = await import("node:path");
+    const { writeFileSync: write } = await import("node:fs");
+    const stateDbPath = joinPath(instance.agCliHome, "state.db");
+    write(stateDbPath, "seed");
+    const sources: WatchChangeSource[] = [];
+    const watcher = new TranscriptWatcher({
+      antigravityDir: instance.antigravityDir,
+      conversationId: CONVERSATION,
+      stateDbPath,
+      debounceMs: 10_000,
+      fallbackMs: 40,
+      onChange: (source) => {
+        sources.push(source);
+      },
+    });
+    watcher.start();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    write(stateDbPath, "changed content");
+    await waitFor(() => sources.includes("state"));
+    watcher.close();
+  });
+});
+
 describe("close", () => {
   it("stops emitting events and is idempotent", async () => {
     const instance = sandbox();

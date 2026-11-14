@@ -42,6 +42,7 @@ export async function runSendCommand(
     const resolved = resolveTarget(target, buildTargetRegistry(paths, reader, store), {
       callerId: currentCallerId(context.env),
     });
+    const wasManaged = store.findByConversationId(resolved.conversationId) !== undefined;
     const row = store.ensureConversation(resolved.conversationId);
     const observation = observeConversation(paths, reader, resolved.conversationId, store);
 
@@ -61,9 +62,6 @@ export async function runSendCommand(
     }
     const queued = observation.status === "working";
 
-    const watermarkStep = maxStepIndex(observation.steps) + 1;
-    store.updateWatermark(resolved.conversationId, watermarkStep);
-
     const caller = callerContext(detectCallerContext(context.env), store);
     const message = wrapOutboundPrompt(text, caller, {
       cwd: process.cwd(),
@@ -71,14 +69,29 @@ export async function runSendCommand(
       raw: flags.flags.has("raw"),
     });
 
-    const client = await AgentApiClient.connect({
-      antigravityDir: paths.antigravityDir,
-      agentapiBin: paths.agentapiBin,
-      baseEnv: context.env,
-    });
-    await client.sendMessage(resolved.conversationId, message, {
-      title: flags.values.get("title"),
-    });
+    const watermarkStep = maxStepIndex(observation.steps) + 1;
+    const previousWatermark = row.watermarkStep;
+    let watermarkApplied = false;
+    try {
+      const client = await AgentApiClient.connect({
+        antigravityDir: paths.antigravityDir,
+        agentapiBin: paths.agentapiBin,
+        baseEnv: context.env,
+      });
+      store.updateWatermark(resolved.conversationId, watermarkStep);
+      watermarkApplied = true;
+      await client.sendMessage(resolved.conversationId, message, {
+        title: flags.values.get("title"),
+      });
+    } catch (error) {
+      if (watermarkApplied) {
+        store.restoreWatermark(resolved.conversationId, watermarkStep, previousWatermark);
+      }
+      if (!wasManaged) {
+        store.removeConversation(resolved.conversationId);
+      }
+      throw error;
+    }
 
     let waitReason: string | undefined;
     let waitStatus: string | undefined;
@@ -94,11 +107,29 @@ export async function runSendCommand(
       waitStatus = outcome.status;
       durationMs = outcome.durationMs;
       if (outcome.timedOut) {
-        const label = `c${row.shortId}`;
-        emitText(
-          context.stderr,
-          `[ag-cli] still working as ${label}${row.name === null ? "" : ` (${row.name}, ${resolved.conversationId.slice(0, 8)})`}`,
-        );
+        const mode = resolveMode({
+          json: flags.flags.has("json"),
+          tty: context.stdout.isTTY === true,
+          pipedIsJson: true,
+        });
+        if (mode === "json") {
+          emitJson(context.stdout, {
+            conversationId: resolved.conversationId,
+            shortId: `c${row.shortId}`,
+            name: row.name,
+            watermarkStep,
+            queued,
+            reason: "timeout",
+            status: outcome.status,
+            timedOut: true,
+            durationMs: outcome.durationMs,
+          });
+        } else {
+          emitText(
+            context.stderr,
+            `[ag-cli] still working as c${row.shortId}${row.name === null ? "" : ` (${row.name}, ${resolved.conversationId.slice(0, 8)})`}`,
+          );
+        }
         return 124;
       }
       waitReason = outcome.status;
@@ -106,7 +137,7 @@ export async function runSendCommand(
 
     const payload = {
       conversationId: resolved.conversationId,
-      shortId: row.shortId,
+      shortId: `c${row.shortId}`,
       name: row.name,
       watermarkStep,
       queued,

@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { join, sep } from "node:path";
 import { AgCliError } from "../types/protocol";
 
 export interface ParsedTemplate {
@@ -56,7 +56,7 @@ function parseFrontmatter(raw: string): Record<string, string> {
   const values: Record<string, string> = {};
   let index = 0;
   while (index < lines.length) {
-    const line = lines[index] ?? "";
+    const line = lines[index] as string;
     index += 1;
     if (line.trim().length === 0 || line.trimStart().startsWith("#")) {
       continue;
@@ -70,7 +70,7 @@ function parseFrontmatter(raw: string): Record<string, string> {
     if (rawValue === "|" || rawValue === ">") {
       const block: string[] = [];
       while (index < lines.length) {
-        const next = lines[index] ?? "";
+        const next = lines[index] as string;
         if (next.trim().length > 0 && !/^\s/.test(next)) {
           break;
         }
@@ -100,8 +100,8 @@ export function parseTemplate(text: string): ParsedTemplate {
     }
     return { preamble: text.trim() };
   }
-  const values = parseFrontmatter(match[1] ?? "");
-  const parsed: ParsedTemplate = { preamble: (match[2] ?? "").trim() };
+  const values = parseFrontmatter(match[1] as string);
+  const parsed: ParsedTemplate = { preamble: (match[2] as string).trim() };
   for (const [key, value] of Object.entries(values)) {
     if (!KNOWN_KEYS.has(key)) {
       continue;
@@ -130,7 +130,7 @@ export function templatePath(configDir: string, name: string): string {
 
 function assertInside(root: string, target: string): void {
   const realRoot = realpathSync(root);
-  const realTarget = existsSync(target) ? realpathSync(target) : resolve(target);
+  const realTarget = realpathSync(target);
   if (realTarget !== realRoot && !realTarget.startsWith(`${realRoot}${sep}`)) {
     throw new AgCliError("invalid_usage", `path ${target} escapes ${root}`, {
       hint: "Templates must live inside the configured templates directory.",

@@ -81,7 +81,7 @@ describe("full user journeys against the built cli from an unrelated cwd", () =>
 
     const schema = await runCli(["schema"]);
     expect(schema.status).toBe(0);
-    expect(JSON.parse(schema.stdout)).toMatchObject({ cli: "ag-cli" });
+    expect(JSON.parse(schema.stdout)).toMatchObject({ title: "ag-cli" });
 
     const templates = await runCli(["templates", "--json"]);
     expect(templates.status).toBe(0);

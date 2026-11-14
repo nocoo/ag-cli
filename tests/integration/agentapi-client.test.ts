@@ -53,13 +53,17 @@ describe("AgentApiClient async delivery", () => {
       },
     });
 
-    const started = Date.now();
+    const receiptStarted = Date.now();
     const created = await client.newConversation({ message: "deferred" });
-    expect(Date.now() - started).toBeLessThan(1000);
+    expect(Date.now() - receiptStarted).toBeLessThan(1000);
     expect(readTranscript(instance, created.conversationId)).toEqual([]);
 
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-    const steps = readTranscript(instance, created.conversationId);
+    const settleStarted = Date.now();
+    let steps = readTranscript(instance, created.conversationId);
+    while (steps.length < 3 && Date.now() - settleStarted < 5000) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      steps = readTranscript(instance, created.conversationId);
+    }
     expect(steps.length).toBe(3);
     expect(steps.at(-1)).toMatchObject({ type: "PLANNER_RESPONSE", status: "DONE" });
   }, 15000);

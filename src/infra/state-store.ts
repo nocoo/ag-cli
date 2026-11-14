@@ -98,8 +98,7 @@ export class StateStore {
     if (row === undefined) {
       return null;
     }
-    const values = Object.values(row);
-    return values.length === 1 ? values[0] : (row[name] ?? null);
+    return Object.values(row)[0] ?? null;
   }
 
   rawExec(sql: string, ...params: Array<string | number | null>): void {
@@ -226,6 +225,27 @@ export class StateStore {
         "UPDATE conversations SET watermark_step = ?, updated_at = ? WHERE conversation_id = ?",
       )
       .run(watermarkStep, this.now(), conversationId);
+  }
+
+  restoreWatermark(conversationId: string, expected: number, previous: number): void {
+    this.db
+      .prepare(
+        "UPDATE conversations SET watermark_step = ?, updated_at = ?" +
+          " WHERE conversation_id = ? AND watermark_step = ?",
+      )
+      .run(previous, this.now(), conversationId, expected);
+  }
+
+  releaseName(conversationId: string): void {
+    this.db
+      .prepare("UPDATE conversations SET name = NULL, updated_at = ? WHERE conversation_id = ?")
+      .run(this.now(), conversationId);
+  }
+
+  setLastTurn(conversationId: string, turns: number): void {
+    this.db
+      .prepare("UPDATE conversations SET last_turn = ?, updated_at = ? WHERE conversation_id = ?")
+      .run(turns, this.now(), conversationId);
   }
 
   advanceTurn(conversationId: string): void {

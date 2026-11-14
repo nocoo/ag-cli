@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { collectBrainIds, observeConversation } from "../../src/cli/commands/registry";
@@ -263,7 +263,7 @@ describe("state-backed conversations", () => {
         status: string;
       }>(getCtx),
     ).toMatchObject({
-      shortId: 1,
+      shortId: "c1",
       name: "ui-check",
       parentId: "19191919-1919-4191-8191-191919191919",
       watermarkStep: 0,
@@ -281,7 +281,7 @@ describe("state-backed conversations", () => {
         parentId: string;
       }>(readCtx),
     ).toMatchObject({
-      shortId: 1,
+      shortId: "c1",
       name: "ui-check",
       labels: { env: "prod" },
       parentId: "19191919-1919-4191-8191-191919191919",
@@ -410,13 +410,42 @@ describe("parseCommandFlags", () => {
   });
 });
 
+describe("strict parsing", () => {
+  it("supports -- to pass option-like positionals and subcommand help", async () => {
+    const instance = sandbox();
+    const ctx = context(false, instance.env);
+    expect(await runCli(["get", "--", "--weird-target"], ctx)).toBe(2);
+    expect(JSON.parse(stderrText(ctx))).toMatchObject({
+      error: { message: expect.stringContaining("--weird-target") },
+    });
+
+    const help = context(true, instance.env);
+    expect(await runCli(["run", "--help"], help)).toBe(0);
+    expect(stdoutText(help)).toContain("ag-cli run");
+    expect(await runCli(["wait", "-h"], help)).toBe(0);
+  });
+
+  it("rejects option-like values and invalid ls statuses", async () => {
+    const instance = sandbox();
+    const optionLike = context(false, instance.env);
+    expect(await runCli(["get", "--json", "--name"], optionLike)).toBe(2);
+
+    const badStatus = context(false, instance.env);
+    expect(await runCli(["ls", "--status", "bogus"], badStatus)).toBe(2);
+  });
+});
+
 describe("runCli dispatch", () => {
-  it("prints usage and exits 2 without a command", async () => {
+  it("routes missing commands through json errors when piped", async () => {
     const instance = sandbox();
     const ctx = context(false, instance.env);
     const code = await runCli([], ctx);
     expect(code).toBe(2);
-    expect(stderrText(ctx)).toContain("Usage");
+    expect(JSON.parse(stderrText(ctx))).toMatchObject({ error: { kind: "invalid_usage" } });
+
+    const tty = context(true, instance.env);
+    expect(await runCli([], tty)).toBe(2);
+    expect(stderrText(tty)).toContain("Usage");
   });
 
   it("prints usage and exits 0 for --help", async () => {
@@ -587,8 +616,8 @@ describe("ls command", () => {
       title: "deps job",
       turn: 1,
       stepCount: 3,
-      shortId: "-",
-      name: "-",
+      shortId: null,
+      name: null,
     });
   });
 
@@ -923,6 +952,25 @@ describe("read command", () => {
     expect(JSON.parse(stderrText(missingCtx))).toMatchObject({ error: { kind: "not_found" } });
   });
 
+  it("rejects artifact paths that escape the conversation brain dir", async () => {
+    const instance = sandbox();
+    const conversationId = await prepareConversation(instance);
+    writeFileSync(join(instance.root, "outside.txt"), "secret");
+
+    const traversal = context(false, instance.env);
+    const code = await runCli(
+      ["read", conversationId, "--artifact", "../../../outside.txt"],
+      traversal,
+    );
+    expect(code).toBe(2);
+    expect(JSON.parse(stderrText(traversal))).toMatchObject({ error: { kind: "invalid_usage" } });
+
+    const linkPath = join(instance.brainDir, conversationId, "escape.txt");
+    symlinkSync(join(instance.root, "outside.txt"), linkPath);
+    const linked = context(false, instance.env);
+    expect(await runCli(["read", conversationId, "--artifact", "escape.txt"], linked)).toBe(2);
+  });
+
   it("lists artifacts in the json payload", async () => {
     const instance = sandbox();
     const conversationId = await prepareConversation(instance);
@@ -967,6 +1015,7 @@ describe("read command", () => {
       { step_index: 4, type: "PLANNER_RESPONSE", status: "DONE", content: "final" },
       { step_index: 6, type: "SYSTEM_MESSAGE", status: "DONE" },
       { step_index: 7, status: "DONE", content: "typeless body" },
+      { step_index: 8, type: "GENERIC", status: "DONE" },
     ];
     writeFileSync(
       join(logs, "transcript.jsonl"),
@@ -990,6 +1039,7 @@ describe("read command", () => {
       "[reply] final",
       "[system] SYSTEM_MESSAGE",
       "[think] typeless body",
+      "[think]",
     ]);
   });
 
@@ -1031,7 +1081,7 @@ describe("read command", () => {
     const ctx = context(false, instance.env);
     await runCli(["read", conversationId, "--json"], ctx);
     const payload = stdoutJson<{ turn: number; turns: Array<{ reply: string }> }>(ctx);
-    expect(payload.turn).toBe(2);
+    expect(payload.turn).toBe(1);
     expect(payload.turns).toHaveLength(1);
     expect(payload.turns[0]?.reply).toBe("Mock reply for: turn two");
   });

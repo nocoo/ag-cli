@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveTarget } from "../../domain/target-resolver";
 import { latestReply, mergeFullSteps, type TranscriptStep } from "../../domain/transcript-parser";
+import { assertInside } from "../../infra/path-safety";
 import { resolvePaths } from "../../infra/paths";
 import { StateStore } from "../../infra/state-store";
 import { openSummariesReader } from "../../infra/summaries-reader";
@@ -64,10 +65,12 @@ export async function runReadCommand(
 
     if (flags.values.has("artifact")) {
       const name = flags.values.get("artifact") as string;
-      const path = join(paths.brainDir, target.conversationId, name);
+      const conversationDir = join(paths.brainDir, target.conversationId);
+      const path = join(conversationDir, name);
       if (!existsSync(path)) {
         throw new AgCliError("not_found", `artifact ${name} not found in ${target.conversationId}`);
       }
+      assertInside(conversationDir, path, "Artifacts must stay inside the conversation brain dir.");
       context.stdout.write(readFileSync(path, "utf8"));
       return 0;
     }
@@ -90,7 +93,10 @@ export async function runReadCommand(
     if (mode === "json") {
       emitJson(context.stdout, {
         conversationId: target.conversationId,
-        shortId: observation.managed?.shortId ?? null,
+        shortId:
+          observation.managed === undefined || observation.managed === null
+            ? null
+            : `c${observation.managed.shortId}`,
         name: observation.managed?.name ?? null,
         parentId:
           observation.managed?.parentId ?? observation.summary?.parent_conversation_id ?? null,
@@ -98,7 +104,7 @@ export async function runReadCommand(
           (store?.listLabels(target.conversationId) ?? []).map((label) => [label.key, label.value]),
         ),
         status: observation.status,
-        turn: observation.turns.length,
+        turn: recentTurns.length,
         reply,
         turns: recentTurns.map((turn) => ({
           turn: turn.inboundStepIndex,

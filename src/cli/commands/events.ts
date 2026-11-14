@@ -1,42 +1,51 @@
 import { resolveTarget } from "../../domain/target-resolver";
-import { resolvePaths } from "../../infra/paths";
+import { type ResolvedPaths, resolvePaths } from "../../infra/paths";
 import { StateStore } from "../../infra/state-store";
-import { openSummariesReader } from "../../infra/summaries-reader";
+import type { SummariesReader } from "../../infra/summaries-reader";
+import { listBrainArtifacts, openSummariesReader } from "../../infra/summaries-reader";
 import { TranscriptWatcher } from "../../infra/transcript-watcher";
-import { AgCliError, type ConversationStatus } from "../../types/protocol";
+import { AgCliError } from "../../types/protocol";
 import { emitText, type StreamLike } from "../format";
 import { parseCommandFlags } from "../index";
 import { buildTargetRegistry, currentCallerId, observeConversation } from "./registry";
 
-const SETTLED = new Set<ConversationStatus>(["done", "blocked", "error"]);
-
-interface TrackedConversation {
-  conversationId: string;
-  shortId: number | null;
-  name: string | null;
-  status: ConversationStatus;
-}
+const HC_OWNER_RE = /^hc:[A-Za-z0-9._-]+$/;
 
 export interface EventsEvent {
-  type: "state" | "step" | "terminal" | "heartbeat";
+  type: "created" | "status" | "step" | "turn" | "artifact" | "heartbeat";
   conversationId?: string;
-  shortId?: number | null;
+  shortId?: string | null;
   name?: string | null;
   status?: string;
   stepIndex?: number;
   stepType?: string;
   stepStatus?: string;
+  turn?: number;
+  artifact?: { name: string; path: string };
   at: string;
+}
+
+interface TrackedConversation {
+  shortId: string | null;
+  name: string | null;
+  status: string;
+  inboundCount: number;
+  artifacts: Set<string>;
+}
+
+export interface EventsOptions {
+  abort?: AbortSignal;
+  discoveryMs?: number;
 }
 
 export async function runEventsCommand(
   args: string[],
   context: { env: Record<string, string | undefined>; stdout: StreamLike },
-  options: { abort?: AbortSignal } = {},
+  options: EventsOptions = {},
 ): Promise<number> {
   const flags = parseCommandFlags(args, {
-    booleans: [],
-    values: ["target", "children-of", "heartbeat-ms"],
+    booleans: ["json"],
+    values: ["target", "children-of", "heartbeat-ms", "discovery-ms"],
     repeatables: ["label"],
   });
   const labelFilters = flags.repeatable.get("label") ?? [];
@@ -47,183 +56,286 @@ export async function runEventsCommand(
       });
     }
   }
-  const heartbeatMs = parseHeartbeat(flags.values.get("heartbeat-ms"));
+  const heartbeatMs = parsePositive(flags.values.get("heartbeat-ms"), 15_000, "heartbeat-ms");
+  const discoveryMs = parsePositive(
+    flags.values.get("discovery-ms"),
+    options.discoveryMs ?? 1000,
+    "discovery-ms",
+  );
+  if (options.abort?.aborted === true) {
+    return 0;
+  }
 
   const paths = resolvePaths(context.env);
   const reader = openSummariesReader(paths.summariesDbPath);
   const store = StateStore.open(paths.stateDbPath);
   try {
-    const registry = buildTargetRegistry(paths, reader, store);
     const callerId = currentCallerId(context.env);
-    const tracked: TrackedConversation[] = [];
+    const filterTarget = flags.values.get("target") ?? flags.values.get("children-of");
+    const childrenMode = flags.values.has("children-of");
+    const owner =
+      filterTarget === undefined
+        ? undefined
+        : resolveFilterOwner(filterTarget, paths, reader, store, callerId);
 
-    const pushTracked = (conversationId: string): void => {
-      const observation = observeConversation(paths, reader, conversationId, store);
-      tracked.push({
-        conversationId,
-        shortId: observation.managed?.shortId ?? null,
-        name: observation.managed?.name ?? null,
-        status: observation.status,
-      });
-    };
-
-    if (flags.values.has("target")) {
-      const resolved = resolveTarget(flags.values.get("target") as string, registry, { callerId });
-      pushTracked(resolved.conversationId);
-    } else if (flags.values.has("children-of")) {
-      const rawOwner = flags.values.get("children-of") as string;
-      let ownerId: string;
-      try {
-        ownerId = resolveTarget(rawOwner, registry, { callerId }).conversationId;
-      } catch {
-        ownerId = rawOwner.trim();
-      }
-      for (const row of store?.listManaged() ?? []) {
-        if (row.parentId === ownerId) {
-          pushTracked(row.conversationId);
+    const discover = (): string[] => {
+      const managed = store?.listManaged({ activeOnly: true }) ?? [];
+      const ids: string[] = [];
+      if (owner !== undefined) {
+        if (!childrenMode) {
+          ids.push(owner.conversationId);
+        } else {
+          for (const row of managed) {
+            if (row.parentId === owner.conversationId) {
+              ids.push(row.conversationId);
+            }
+          }
+          for (const row of reader?.listConversations() ?? []) {
+            if (row.parent_conversation_id === owner.conversationId && row.killed === 0) {
+              ids.push(row.conversation_id);
+            }
+          }
         }
-      }
-      for (const row of reader?.listConversations() ?? []) {
-        if (row.parent_conversation_id === ownerId) {
-          if (!tracked.some((entry) => entry.conversationId === row.conversation_id)) {
-            pushTracked(row.conversation_id);
+      } else {
+        for (const row of managed) {
+          if (matchesLabels(store, row.conversationId, labelFilters)) {
+            ids.push(row.conversationId);
+          }
+        }
+        if (labelFilters.length === 0) {
+          for (const row of reader?.listConversations() ?? []) {
+            if (row.killed === 0) {
+              ids.push(row.conversation_id);
+            }
           }
         }
       }
-    } else {
-      const seen = new Set<string>();
-      for (const row of store?.listManaged({ activeOnly: true }) ?? []) {
-        if (
-          !seen.has(row.conversationId) &&
-          matchesLabels(store, row.conversationId, labelFilters)
-        ) {
-          seen.add(row.conversationId);
-          pushTracked(row.conversationId);
-        }
-      }
-      for (const row of reader?.listConversations() ?? []) {
-        if (seen.has(row.conversation_id) || row.killed === 1) {
-          continue;
-        }
-        if (labelFilters.length > 0) {
-          continue;
-        }
-        seen.add(row.conversation_id);
-        pushTracked(row.conversation_id);
-      }
-    }
-
-    const tty = context.stdout.isTTY === true;
-    const emit = (event: EventsEvent): void => {
-      if (tty) {
-        emitText(context.stdout, renderHuman(event, tracked));
-        return;
-      }
-      context.stdout.write(`${JSON.stringify(event)}\n`);
+      const unique = [...new Set(ids)];
+      return labelFilters.length > 0
+        ? unique.filter((id) => matchesLabels(store, id, labelFilters))
+        : unique;
     };
 
-    return await new Promise<number>((resolve) => {
-      const watchers: TranscriptWatcher[] = [];
-      let stopped = false;
+    const tty = context.stdout.isTTY === true;
+    const tracked = new Map<string, TrackedConversation>();
+    const watchers = new Map<string, TranscriptWatcher>();
+    let heartbeatTimer: ReturnType<typeof setInterval> = setInterval(() => {}, 1 << 30);
+    let discoveryTimer: ReturnType<typeof setInterval> = setInterval(() => {}, 1 << 30);
+    let resolveRun: ((code: number) => void) | undefined;
+    let rejectRun: ((error: unknown) => void) | undefined;
 
-      const shutdown = (): void => {
-        if (stopped) {
-          return;
-        }
-        stopped = true;
-        clearInterval(heartbeatTimer);
-        for (const watcher of watchers) {
-          watcher.close();
-        }
-        cleanupAbort();
-        for (const signal of ["SIGINT", "SIGTERM"] as const) {
-          process.removeListener(signal, onSignal);
-        }
-        resolve(0);
-      };
+    const emit = (event: EventsEvent): void => {
+      if (tty) {
+        emitText(context.stdout, renderHuman(event));
+      } else {
+        context.stdout.write(`${JSON.stringify(event)}\n`);
+      }
+    };
 
-      const onSignal = (): void => {
-        shutdown();
+    const cleanup = (): void => {
+      clearInterval(heartbeatTimer);
+      clearInterval(discoveryTimer);
+      for (const watch of watchers.values()) {
+        watch.close();
+      }
+      watchers.clear();
+      options.abort?.removeEventListener("abort", onAbort);
+      if (options.abort === undefined) {
+        process.removeListener("SIGINT", onSignal);
+        process.removeListener("SIGTERM", onSignal);
+      }
+    };
+
+    const stop = (): void => {
+      cleanup();
+      resolveRun?.(0);
+    };
+
+    const fail = (error: unknown): void => {
+      cleanup();
+      rejectRun?.(error);
+    };
+
+    const guarded = (action: () => void): void => {
+      try {
+        action();
+      } catch (error) {
+        fail(error);
+      }
+    };
+
+    const onSignal = (): void => {
+      stop();
+    };
+    const onAbort = (): void => {
+      stop();
+    };
+
+    const describeLive = (conversationId: string): TrackedConversation => {
+      const observation = observeConversation(paths, reader, conversationId, store);
+      return {
+        shortId:
+          observation.managed === undefined || observation.managed === null
+            ? null
+            : `c${observation.managed.shortId}`,
+        name: observation.managed?.name ?? null,
+        status: observation.status as string,
+        inboundCount: 0,
+        artifacts: new Set(),
       };
-      const onAbort = (): void => {
-        shutdown();
-      };
-      const cleanupAbort = (): void => {
-        options.abort?.removeEventListener("abort", onAbort);
-      };
+    };
+
+    const attach = (conversationId: string, announce: boolean): void => {
+      const entry = describeLive(conversationId);
+      tracked.set(conversationId, entry);
+      const watch: TranscriptWatcher = new TranscriptWatcher({
+        antigravityDir: paths.antigravityDir,
+        conversationId,
+        summariesDbPath: paths.summariesDbPath,
+        stateDbPath: paths.stateDbPath,
+        debounceMs: 20,
+        fallbackMs: 1000,
+        onChange: () => {
+          guarded(() => {
+            handleChange(conversationId, watch);
+          });
+        },
+      });
+      watch.start();
+      const primed = watch.readNewSteps();
+      entry.inboundCount = primed.filter(
+        (step) => step.type === "USER_INPUT" || step.type === "SYSTEM_MESSAGE",
+      ).length;
+      entry.artifacts = new Set(
+        listBrainArtifacts(paths.brainDir, conversationId).map((artifact) => artifact.name),
+      );
+      watchers.set(conversationId, watch);
+      if (announce) {
+        emit({
+          type: "created",
+          conversationId,
+          shortId: entry.shortId,
+          name: entry.name,
+          status: entry.status,
+          at: timestamp(),
+        });
+      }
+    };
+
+    const handleChange = (conversationId: string, watch: TranscriptWatcher): void => {
+      const freshSteps = watch.readNewSteps();
+      const entry = tracked.get(conversationId);
+      if (entry === undefined) {
+        return;
+      }
+      for (const step of freshSteps) {
+        emit({
+          type: "step",
+          conversationId,
+          shortId: entry.shortId,
+          stepIndex: step.step_index,
+          stepType: step.type,
+          stepStatus: step.status,
+          at: timestamp(),
+        });
+        if (step.type === "USER_INPUT" || step.type === "SYSTEM_MESSAGE") {
+          entry.inboundCount += 1;
+          emit({
+            type: "turn",
+            conversationId,
+            shortId: entry.shortId,
+            turn: entry.inboundCount,
+            at: timestamp(),
+          });
+        }
+      }
+      const observation = observeConversation(
+        paths,
+        reader,
+        conversationId,
+        store,
+        watch.currentSteps(),
+      );
+      if (observation.status !== entry.status) {
+        entry.status = observation.status;
+        emit({
+          type: "status",
+          conversationId,
+          shortId: entry.shortId,
+          name: entry.name,
+          status: entry.status,
+          at: timestamp(),
+        });
+      }
+      for (const artifact of listBrainArtifacts(paths.brainDir, conversationId)) {
+        if (!entry.artifacts.has(artifact.name)) {
+          entry.artifacts.add(artifact.name);
+          emit({
+            type: "artifact",
+            conversationId,
+            shortId: entry.shortId,
+            artifact: { name: artifact.name, path: artifact.path },
+            at: timestamp(),
+          });
+        }
+      }
+    };
+
+    return await new Promise<number>((resolve, reject) => {
+      resolveRun = resolve;
+      rejectRun = reject;
       options.abort?.addEventListener("abort", onAbort);
       if (options.abort === undefined) {
         process.on("SIGINT", onSignal);
         process.on("SIGTERM", onSignal);
       }
 
-      const heartbeatTimer = setInterval(() => {
-        emit({ type: "heartbeat", at: new Date().toISOString() });
-      }, heartbeatMs);
-
-      for (const entry of tracked) {
-        const watcher = new TranscriptWatcher({
-          antigravityDir: paths.antigravityDir,
-          conversationId: entry.conversationId,
-          summariesDbPath: paths.summariesDbPath,
-          debounceMs: 20,
-          fallbackMs: 1000,
-          onChange: () => {
-            if (stopped) {
-              return;
-            }
-            const freshSteps = watcher.readNewSteps();
-            const fresh = observeConversation(
-              paths,
-              reader,
-              entry.conversationId,
-              store,
-              watcher.currentSteps(),
-            );
-            for (const step of freshSteps) {
-              emit({
-                type: "step",
-                conversationId: entry.conversationId,
-                shortId: entry.shortId,
-                stepIndex: step.step_index,
-                stepType: step.type,
-                stepStatus: step.status,
-                at: new Date().toISOString(),
-              });
-            }
-            if (fresh.status !== entry.status) {
-              const wasSettled = SETTLED.has(entry.status);
-              entry.status = fresh.status;
-              emit({
-                type: "state",
-                conversationId: entry.conversationId,
-                shortId: entry.shortId,
-                name: entry.name,
-                status: entry.status,
-                at: new Date().toISOString(),
-              });
-              if (SETTLED.has(entry.status) && !wasSettled) {
-                emit({
-                  type: "terminal",
-                  conversationId: entry.conversationId,
-                  shortId: entry.shortId,
-                  name: entry.name,
-                  status: entry.status,
-                  at: new Date().toISOString(),
-                });
-              }
-            }
-          },
+      guarded(() => {
+        for (const conversationId of discover()) {
+          attach(conversationId, false);
+        }
+      });
+      heartbeatTimer = setInterval(() => {
+        guarded(() => {
+          emit({ type: "heartbeat", at: timestamp() });
         });
-        watcher.start();
-        watcher.readNewSteps();
-        watchers.push(watcher);
-      }
+      }, heartbeatMs);
+      discoveryTimer = setInterval(() => {
+        guarded(() => {
+          const current = new Set(discover());
+          for (const conversationId of current) {
+            if (!tracked.has(conversationId)) {
+              attach(conversationId, true);
+            }
+          }
+          for (const conversationId of [...tracked.keys()]) {
+            if (!current.has(conversationId)) {
+              watchers.get(conversationId)?.close();
+              watchers.delete(conversationId);
+              tracked.delete(conversationId);
+            }
+          }
+        });
+      }, discoveryMs);
     });
   } finally {
     reader?.close();
     store?.close();
   }
+}
+
+function resolveFilterOwner(
+  owner: string,
+  paths: ResolvedPaths,
+  reader: SummariesReader | null,
+  store: StateStore | null,
+  callerId: string | undefined,
+): { conversationId: string } {
+  const trimmed = owner.trim();
+  if (HC_OWNER_RE.test(trimmed)) {
+    return { conversationId: trimmed };
+  }
+  return resolveTarget(trimmed, buildTargetRegistry(paths, reader, store), { callerId });
 }
 
 function matchesLabels(
@@ -240,35 +352,36 @@ function matchesLabels(
   });
 }
 
-function renderHuman(event: EventsEvent, tracked: TrackedConversation[]): string {
+function renderHuman(event: EventsEvent): string {
   const time = event.at.slice(11, 19);
-  const entry =
-    event.conversationId === undefined
-      ? undefined
-      : tracked.find((item) => item.conversationId === event.conversationId);
-  const label =
-    entry === undefined
-      ? ""
-      : `${entry.shortId === null ? entry.conversationId.slice(0, 8) : `c${entry.shortId}`}`;
+  const label = event.shortId ?? (event.conversationId ?? "").slice(0, 8);
   switch (event.type) {
     case "heartbeat":
       return `${time} heartbeat`;
+    case "created":
+      return `${time} ${label} created ${event.status ?? ""}`.trimEnd();
     case "step":
       return `${time} ${label} step ${event.stepIndex} ${event.stepType} ${event.stepStatus}`;
-    case "state":
+    case "turn":
+      return `${time} ${label} turn ${event.turn}`;
+    case "status":
       return `${time} ${label} status ${event.status}`;
-    case "terminal":
-      return `${time} ${label} terminal ${event.status}`;
+    case "artifact":
+      return `${time} ${label} artifact ${event.artifact?.name ?? ""}`;
   }
 }
 
-function parseHeartbeat(raw: string | undefined): number {
+function timestamp(): string {
+  return new Date().toISOString();
+}
+
+function parsePositive(raw: string | undefined, fallback: number, name: string): number {
   if (raw === undefined) {
-    return 15_000;
+    return fallback;
   }
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 1) {
-    throw new AgCliError("invalid_usage", `--heartbeat-ms expects a positive integer, got ${raw}`);
+    throw new AgCliError("invalid_usage", `--${name} expects a positive integer, got ${raw}`);
   }
   return value;
 }

@@ -306,7 +306,6 @@ function runTurn(db, id, title, message) {
   sleep(DELAY_MS);
 
   if (MODE === "stuck") {
-    appendStep(id, inbound, "USER_INPUT", "DONE", { content: message });
     saveSummary(db, id, title, inbound + 1, "CASCADE_RUN_STATUS_RUNNING", 1, inbound);
     return;
   }

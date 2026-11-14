@@ -85,6 +85,31 @@ describe("parseTemplate", () => {
     expect(parsed).toEqual({ name: "it's a name", description: "it's quoted", preamble: "Body." });
   });
 
+  it("skips comment and blank frontmatter lines and folded block scalars", () => {
+    const parsed = parseTemplate(
+      [
+        "---",
+        "# a comment",
+        "",
+        "description: >",
+        "  folded one",
+        "  folded two",
+        "name: folded",
+        "---",
+        "Body.",
+      ].join("\n"),
+    );
+    expect(parsed).toEqual({
+      description: "folded one folded two",
+      name: "folded",
+      preamble: "Body.",
+    });
+  });
+
+  it("rejects a bare frontmatter marker", () => {
+    expect(() => parseTemplate("---")).toThrow();
+  });
+
   it("rejects non-string values for known fields", () => {
     expect(() => parseTemplate("---\nmodel: 42\n---\nBody.")).toThrow();
     expect(() => parseTemplate("---\nprofile: true\n---\nBody.")).toThrow();

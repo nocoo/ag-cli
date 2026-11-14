@@ -22,7 +22,7 @@ export async function awaitSettledStatus(options: {
 }): Promise<SettleOutcome> {
   const start = Date.now();
 
-  return new Promise<SettleOutcome>((resolve) => {
+  return new Promise<SettleOutcome>((resolve, reject) => {
     let finished = false;
     const watcher = new TranscriptWatcher({
       antigravityDir: options.paths.antigravityDir,
@@ -32,34 +32,80 @@ export async function awaitSettledStatus(options: {
       debounceMs: 20,
       fallbackMs: 500,
       onChange: () => {
-        tick();
+        guarded(tick);
       },
     });
-    const check = (): ConversationStatus => {
-      watcher.readNewSteps();
-      return observeConversation(
+
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const observation = () =>
+      observeConversation(
         options.paths,
         options.reader,
         options.conversationId,
         options.store,
         watcher.currentSteps(),
-      ).status;
+      );
+
+    const status = (): ConversationStatus => {
+      watcher.readNewSteps();
+      return observation().status;
     };
-    const finish = (timedOut: boolean): void => {
+
+    const cleanup = (): void => {
       finished = true;
-      clearTimeout(deadlineTimer);
+      if (deadlineTimer !== undefined) {
+        clearTimeout(deadlineTimer);
+      }
       watcher.close();
-      resolve({ status: check(), timedOut, durationMs: Date.now() - start });
     };
+
+    const finish = (timedOut: boolean): void => {
+      if (finished) {
+        return;
+      }
+      cleanup();
+      const fresh = observation();
+      if (fresh.status === "done" && options.store !== null) {
+        const turns = fresh.turns.length;
+        const managed = options.store.findByConversationId(options.conversationId);
+        if (managed !== undefined && turns > managed.lastTurn) {
+          options.store.setLastTurn(options.conversationId, turns);
+        }
+      }
+      resolve({ status: fresh.status, timedOut, durationMs: Date.now() - start });
+    };
+
+    const fail = (error: unknown): void => {
+      if (finished) {
+        return;
+      }
+      cleanup();
+      reject(error);
+    };
+
+    const guarded = (action: () => void): void => {
+      try {
+        action();
+      } catch (error) {
+        fail(error);
+      }
+    };
+
     const tick = (): void => {
-      if (!finished && SETTLED.has(check())) {
+      if (!finished && SETTLED.has(status())) {
         finish(false);
       }
     };
-    const deadlineTimer = setTimeout(() => {
-      finish(!SETTLED.has(check()));
-    }, options.timeoutSec * 1000);
+
     watcher.start();
-    tick();
+    if (options.timeoutSec > 0) {
+      deadlineTimer = setTimeout(() => {
+        guarded(() => {
+          finish(!SETTLED.has(status()));
+        });
+      }, options.timeoutSec * 1000);
+    }
+    guarded(tick);
   });
 }

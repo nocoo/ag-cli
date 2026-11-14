@@ -26,7 +26,10 @@ export async function runGetCommand(
 
     const payload = {
       conversationId: observation.conversationId,
-      shortId: observation.managed?.shortId ?? null,
+      shortId:
+        observation.managed === undefined || observation.managed === null
+          ? null
+          : `c${observation.managed.shortId}`,
       name: observation.managed?.name ?? null,
       title: observation.summary?.title ?? null,
       status: observation.status,
@@ -54,7 +57,7 @@ export async function runGetCommand(
         context.stdout,
         [
           `conversationId: ${payload.conversationId}`,
-          `shortId: ${payload.shortId === null ? "-" : `c${payload.shortId}`}`,
+          `shortId: ${payload.shortId ?? "-"}`,
           `name: ${payload.name ?? "-"}`,
           `title: ${payload.title ?? ""}`,
           `status: ${payload.status}`,

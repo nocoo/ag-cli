@@ -86,6 +86,11 @@ describe("wait and events e2e against dist/index.js", () => {
     expect(lines.length).toBeGreaterThan(0);
     const events = lines.map((line) => JSON.parse(line) as { type: string });
     expect(events.some((event) => event.type === "heartbeat")).toBe(true);
+    expect(
+      events.every((event) =>
+        ["created", "status", "step", "turn", "artifact", "heartbeat"].includes(event.type),
+      ),
+    ).toBe(true);
 
     const eventsPromise = spawnCli(
       ["events", "--target", conversationId, "--heartbeat-ms", "5000"],

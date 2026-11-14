@@ -66,9 +66,18 @@ export function parseCommandFlags(
   const repeatable = new Map<string, string[]>();
   const positionals: string[] = [];
   let skipNext = false;
+  let positionalOnly = false;
   for (const [index, arg] of args.entries()) {
     if (skipNext) {
       skipNext = false;
+      continue;
+    }
+    if (positionalOnly || arg === "--") {
+      if (arg === "--") {
+        positionalOnly = true;
+      } else {
+        positionals.push(arg);
+      }
       continue;
     }
     if (arg.startsWith("--")) {
@@ -77,7 +86,7 @@ export function parseCommandFlags(
         flags.add(name);
       } else if (spec.values.includes(name) || (spec.repeatables ?? []).includes(name)) {
         const value = args[index + 1];
-        if (value === undefined) {
+        if (value === undefined || value.startsWith("--")) {
           throw new AgCliError("invalid_usage", `--${name} expects a value`);
         }
         if (spec.values.includes(name)) {
@@ -115,8 +124,28 @@ export async function runCli(argv: string[], context: CliContext): Promise<numbe
       return 0;
     }
     if (command === undefined) {
-      emitText(context.stderr, USAGE);
+      const mode = resolveMode({
+        json: argv.includes("--json"),
+        tty: context.stdout.isTTY === true,
+        pipedIsJson: true,
+      });
+      if (mode === "json") {
+        emitError(
+          context.stderr,
+          new AgCliError("invalid_usage", "missing command", { hint: "Run ag-cli --help." }),
+          "json",
+        );
+      } else {
+        emitText(context.stderr, USAGE);
+      }
       return 2;
+    }
+    if (args.includes("--help") || args.includes("-h")) {
+      emitText(
+        context.stdout,
+        `Usage: ag-cli ${command} [options]\n\nRun ag-cli --help for the full command list.`,
+      );
+      return 0;
     }
     if (command === "status" || command === "doctor") {
       return await runStatusCommand(args, context);

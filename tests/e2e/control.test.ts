@@ -84,7 +84,7 @@ describe("control e2e against dist/index.js", () => {
       status: string;
     };
     expect(payload).toMatchObject({
-      shortId: 1,
+      shortId: "c1",
       name: "e2e-worker",
       reused: false,
       watermarkStep: 0,
@@ -140,7 +140,7 @@ describe("control e2e against dist/index.js", () => {
   it("sends messages with preconditions and watermark tracking", async () => {
     const ok = await runCli(["send", "--if", "done", "e2e-worker", "third round"]);
     expect(ok.status).toBe(0);
-    expect(JSON.parse(ok.stdout)).toMatchObject({ shortId: 1, watermarkStep: 6, queued: false });
+    expect(JSON.parse(ok.stdout)).toMatchObject({ shortId: "c1", watermarkStep: 6, queued: false });
 
     const mismatch = await runCli(["send", "--if", "idle", "e2e-worker", "nope"]);
     expect(mismatch.status).toBe(3);
@@ -196,6 +196,6 @@ describe("control e2e against dist/index.js", () => {
       AG_MOCK_AGENTAPI_MODE: "stuck",
     });
     expect(wait.status).toBe(124);
-    expect(wait.stderr).toContain("still working");
+    expect(JSON.parse(wait.stdout)).toMatchObject({ reason: "timeout", timedOut: true });
   }, 15000);
 });

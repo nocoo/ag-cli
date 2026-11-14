@@ -224,19 +224,43 @@ describe("run with templates", () => {
 });
 
 describe("schema command", () => {
-  it("prints the full cli schema as json", async () => {
+  it("prints machine-readable json schema definitions", async () => {
     const instance = await prepared();
     const ctx = context(true, instance.env);
     const code = await runCli(["schema"], ctx);
     expect(code).toBe(0);
     const schema = stdoutJson<{
-      cli: string;
-      exitCodes: Record<string, number>;
-      commands: Array<{ name: string; options: Array<{ name: string; kind: string }> }>;
+      $schema: string;
+      title: string;
+      properties: {
+        exitCodes: { properties: Record<string, { const: number }> };
+        reasons: { items: { enum: string[] } };
+        types: { properties: Record<string, { required?: string[] }> };
+        commands: {
+          properties: Record<
+            string,
+            {
+              properties: {
+                options: { properties: Record<string, unknown> };
+                output: { $ref: string };
+              };
+              required: string[];
+            }
+          >;
+        };
+      };
     }>(ctx);
-    expect(schema.cli).toBe("ag-cli");
-    expect(schema.exitCodes).toMatchObject({ ok: 0, timeout: 124 });
-    const names = schema.commands.map((command) => command.name);
+    expect(schema.title).toBe("ag-cli");
+    expect(schema.$schema).toContain("json-schema");
+    expect(schema.properties.exitCodes.properties.timeout?.const).toBe(124);
+    expect(schema.properties.reasons.items.enum).toEqual([
+      "done",
+      "blocked",
+      "error",
+      "message",
+      "timeout",
+    ]);
+    const commands = schema.properties.commands.properties;
     for (const expected of [
       "run",
       "send",
@@ -253,10 +277,13 @@ describe("schema command", () => {
       "status",
       "schema",
     ]) {
-      expect(names).toContain(expected);
+      expect(commands[expected]).toBeDefined();
     }
-    const run = schema.commands.find((command) => command.name === "run");
-    expect(run?.options.some((option) => option.name === "--bg")).toBe(true);
+    expect(Object.keys(commands.run?.properties.options.properties ?? {})).toContain("--bg");
+    for (const name of Object.keys(commands)) {
+      const ref = (commands[name]?.properties.output.$ref ?? "").replace("#/types/", "");
+      expect(schema.properties.types.properties[ref]).toBeDefined();
+    }
   });
 });
 
