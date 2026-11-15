@@ -1,4 +1,4 @@
-# System0 quality slots (base-ci v2026.15).
+# System1 quality slots, native mode (system1-quality v1.3.0, base-ci v2026.15).
 name: CI
 
 on:
@@ -13,25 +13,4 @@ permissions:
 
 jobs:
   quality:
-    uses: nocoo/base-ci/.github/workflows/quality.yml@777bbe4f9bacab8a91d8c01974480a6ee23d28e0
-    with:
-      runtime-version: "1.4.4"
-      node-version: "26.13.0"
-      typecheck: true
-      lint: true
-      unit: true
-      test-command: "bun run test:coverage"
-      security: true
-      lockfiles: "bun.lock"
-      build: true
-      build-command: "bun run build"
-      l3-integration: true
-      l2-command: "bun run test:integration"
-      l4: true
-      l4-command: "bun run test:e2e"
-      package-check: true
-      package-command: "bun run ci:package"
-      workflow-lint: true
-      workflow-lint-yamllint: true
-      slot-status: >-
-        {"S1": {"status": "impl"}, "S2": {"status": "impl"}, "S3": {"status": "impl"}, "G1": {"status": "impl"}, "G2": {"status": "impl"}, "B1": {"status": "impl"}, "L1": {"status": "impl"}, "L2": {"status": "na", "reason": "Local macOS CLI wrapper without Cloudflare Worker or platform runtime bindings"}, "L3": {"status": "impl"}, "L4": {"status": "impl"}, "P1": {"status": "impl"}, "Z1": {"status": "impl"}}
+    uses: ./.github/workflows/quality-slots.yml

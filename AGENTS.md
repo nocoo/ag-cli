@@ -49,10 +49,11 @@ must keep zero direct upstream URLs: `rg -c '", "https' bun.lock` stays empty.
 - Git hooks live in `scripts/hooks` (`git config core.hooksPath scripts/hooks`,
   set by `prepare`). Never push unprompted.
 
-## Quality slots (base-ci v2026.15)
+## Quality slots (base-ci v2026.15, native mode)
 
 S1 Types, S2 Lint, S3 Workflow, G1 Secrets, G2 Dependencies, B1 Build, L1 Unit
 (>= 95%), L3 Integration, L4 E2E, P1 Package, Z1 Gate are `impl`. L2 Runtime is
 `na`: local macOS CLI wrapper without Cloudflare Worker or platform runtime
-bindings. CI is `.github/workflows/ci.yml` calling
-`nocoo/base-ci/.github/workflows/quality.yml@777bbe4f9bacab8a91d8c01974480a6ee23d28e0`.
+bindings. CI runs `.github/workflows/ci.yml` -> `./.github/workflows/quality-slots.yml`
+using `nocoo/base-ci` `v2026.15` (`777bbe4f9bacab8a91d8c01974480a6ee23d28e0`) composite
+actions (`setup-js`, `setup-security-scanners`), gated on `quality / Z1: Gate`.
