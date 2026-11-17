@@ -26,7 +26,7 @@
     "test:coverage": "vitest run --project unit --coverage",
     "test:integration": "vitest run --project integration",
     "test:e2e": "vitest run --project e2e",
-    "build": "bun build src/index.ts --target node --banner \"#!/usr/bin/env node\" --outfile dist/index.js && cp src/cli/skill.md dist/skill.md && bun build src/index.ts --compile --outfile dist/ag-cli",
+    "build": "bun build src/index.ts --target node --banner \"#!/usr/bin/env node\" --outfile dist/index.js && cp src/cli/skill.md dist/skill.md && bun build src/index.ts --compile --outfile dist/ag-cli && (uname -s | grep -q Darwin && codesign -s - -f dist/ag-cli || true)",
     "ci:package": "bun run scripts/check-package.ts",
     "prepare": "git config core.hooksPath scripts/hooks || true"
   },
