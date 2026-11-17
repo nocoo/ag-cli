@@ -49,7 +49,7 @@ describe("wait against the live mock stack", () => {
     initSummariesDb(instance);
     writeMockAgentapi(instance);
     const parent = "8f8f8f8f-8f8f-48f8-88f8-8f8f8f8f8f8f";
-    const childCreated = runAgentapi(instance, ["new-conversation", "--message", "child work"], {
+    const childCreated = runAgentapi(instance, ["new-conversation", "child work"], {
       AG_MOCK_AGENTAPI_MODE: "stuck",
     });
     const child = (JSON.parse(childCreated.stdout) as { conversationId: string }).conversationId;
@@ -66,7 +66,7 @@ describe("wait against the live mock stack", () => {
     const ctx = context({ ...instance.env, AG_CLI_CALLER_ID: parent });
     const waitPromise = runCli(["wait", "--children", "any", "--json", "--timeout", "10"], ctx);
     await new Promise((resolve) => setTimeout(resolve, 400));
-    runAgentapi(instance, ["send-message", "--conversation-id", child, "--message", "finish it"]);
+    runAgentapi(instance, ["send-message", child, "finish it"]);
     const code = await waitPromise;
     expect(code).toBe(0);
     expect(stdoutJson<{ reason: string; target: { conversationId: string } }>(ctx)).toMatchObject({

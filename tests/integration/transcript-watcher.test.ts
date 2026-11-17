@@ -33,7 +33,7 @@ describe("TranscriptWatcher against the mock agentapi", () => {
     const instance = sandbox();
     initSummariesDb(instance);
     writeMockAgentapi(instance);
-    const created = runAgentapi(instance, ["new-conversation", "--message", "first"]);
+    const created = runAgentapi(instance, ["new-conversation", "first"]);
     const conversationId = (JSON.parse(created.stdout) as { conversationId: string })
       .conversationId;
 
@@ -52,13 +52,7 @@ describe("TranscriptWatcher against the mock agentapi", () => {
     watcher.start();
     await new Promise((resolve) => setTimeout(resolve, 30));
 
-    const sent = runAgentapi(instance, [
-      "send-message",
-      "--conversation-id",
-      conversationId,
-      "--message",
-      "second",
-    ]);
+    const sent = runAgentapi(instance, ["send-message", conversationId, "second"]);
     expect(sent.status).toBe(0);
 
     const expected = [3, 4, 5];
@@ -181,7 +175,7 @@ describe("turn watermark anti-race through awaitSettledStatus", () => {
     const instance = sandbox();
     initSummariesDb(instance);
     writeMockAgentapi(instance);
-    const created = runAgentapi(instance, ["new-conversation", "--message", "first turn"]);
+    const created = runAgentapi(instance, ["new-conversation", "first turn"]);
     const conversationId = (JSON.parse(created.stdout) as { conversationId: string })
       .conversationId;
 
@@ -235,7 +229,7 @@ describe("turn watermark anti-race through awaitSettledStatus", () => {
     const instance = sandbox();
     initSummariesDb(instance);
     writeMockAgentapi(instance);
-    const created = runAgentapi(instance, ["new-conversation", "--message", "needs approval"], {
+    const created = runAgentapi(instance, ["new-conversation", "needs approval"], {
       AG_MOCK_AGENTAPI_MODE: "blocked",
     });
     const conversationId = (JSON.parse(created.stdout) as { conversationId: string })

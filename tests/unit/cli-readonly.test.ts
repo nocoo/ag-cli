@@ -55,13 +55,7 @@ function stdoutJson<T>(ctx: CliContext): T {
 async function prepareConversation(instance: Sandbox, message = "upgrade deps"): Promise<string> {
   initSummariesDb(instance);
   writeMockAgentapi(instance);
-  const result = runAgentapi(instance, [
-    "new-conversation",
-    "--title",
-    "deps job",
-    "--message",
-    message,
-  ]);
+  const result = runAgentapi(instance, ["new-conversation", "--title", "deps job", message]);
   expect(result.status).toBe(0);
   return (JSON.parse(result.stdout) as { conversationId: string }).conversationId;
 }
@@ -185,7 +179,7 @@ describe("state-backed conversations", () => {
   it("filters by repeated --label pairs with AND semantics", async () => {
     const instance = sandbox();
     const first = await prepareConversation(instance, "first");
-    runAgentapi(instance, ["new-conversation", "--message", "second"]);
+    runAgentapi(instance, ["new-conversation", "second"]);
     const second = "";
     expect(second).toBe("");
     const store = StateStore.open(join(instance.agCliHome, "state.db"), { create: true });
@@ -900,7 +894,7 @@ describe("get command", () => {
     const instance = sandbox();
     initSummariesDb(instance);
     writeMockAgentapi(instance);
-    const created = runAgentapi(instance, ["new-conversation", "--message", "explode"], {
+    const created = runAgentapi(instance, ["new-conversation", "explode"], {
       AG_MOCK_AGENTAPI_MODE: "error",
     });
     const errored = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
@@ -1193,13 +1187,7 @@ describe("read command", () => {
   it("limits turns with --turns", async () => {
     const instance = sandbox();
     const conversationId = await prepareConversation(instance, "turn one");
-    runAgentapi(instance, [
-      "send-message",
-      "--conversation-id",
-      conversationId,
-      "--message",
-      "turn two",
-    ]);
+    runAgentapi(instance, ["send-message", conversationId, "turn two"]);
 
     const ctx = context(false, instance.env);
     await runCli(["read", conversationId, "--json"], ctx);
@@ -1212,13 +1200,7 @@ describe("read command", () => {
   it("reports total turns while selecting recent ones (review F16)", async () => {
     const instance = sandbox();
     const conversationId = await prepareConversation(instance, "turn one");
-    runAgentapi(instance, [
-      "send-message",
-      "--conversation-id",
-      conversationId,
-      "--message",
-      "turn two",
-    ]);
+    runAgentapi(instance, ["send-message", conversationId, "turn two"]);
 
     const ctx = context(false, instance.env);
     await runCli(["read", conversationId, "--json", "--turns", "2"], ctx);
@@ -1344,7 +1326,7 @@ describe("read command", () => {
     const instance = sandbox();
     initSummariesDb(instance);
     writeMockAgentapi(instance);
-    const created = runAgentapi(instance, ["new-conversation", "--message", "stuck"], {
+    const created = runAgentapi(instance, ["new-conversation", "stuck"], {
       AG_MOCK_AGENTAPI_MODE: "blocked",
     });
     const blocked = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;

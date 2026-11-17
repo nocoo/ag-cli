@@ -149,7 +149,7 @@ describe("agentapi subprocess wrappers", () => {
       .filter(Boolean)
       .map((line) => JSON.parse(line) as { args: string[]; project: string | null });
     const call = calls.find((entry) => entry.args.includes("--model"));
-    expect(call?.args).toEqual(expect.arrayContaining(["--model", "pro"]));
+    expect(call?.args).toEqual(["new-conversation", "--model", "pro", "modelled"]);
     expect(call?.project).toBe("proj-call");
   });
 
@@ -183,6 +183,16 @@ describe("agentapi subprocess wrappers", () => {
       conversation_id: created.conversationId,
       status: "CASCADE_RUN_STATUS_IDLE",
     });
+
+    const calls = readFileSync(join(instance.root, "mock-agentapi-calls.jsonl"), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { command: string; args: string[] });
+    expect(calls.map((c) => c.args)).toEqual([
+      ["new-conversation", "first"],
+      ["send-message", "--title", "turn 2", created.conversationId, "second turn"],
+      ["get-conversation-metadata", created.conversationId],
+    ]);
   });
 
   it("surfaces agentapi failures as runtime errors", async () => {
@@ -265,6 +275,27 @@ describe("agentapi subprocess wrappers", () => {
     });
     const created = await client.newConversation({ message: "env check" });
     expect(created.conversationId.length).toBe(36);
+  });
+
+  it("unwraps nested response.<command> payloads emitted by real agentapi", async () => {
+    const instance = sandbox();
+    const client = await connectedClient(instance);
+    const id = "11111111-1111-4111-8111-111111111111";
+    writeFileSync(
+      instance.agentapiBin,
+      [
+        "#!/usr/bin/env node",
+        "const cmd = process.argv[2];",
+        `if (cmd === "new-conversation") console.log(JSON.stringify({ response: { newConversation: { prompt: "hi", conversationId: "${id}" } } }));`,
+        `else if (cmd === "send-message") console.log(JSON.stringify({ response: { sendMessage: { recipientId: "${id}", content: "next" } } }));`,
+        "else process.exit(2);",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const created = await client.newConversation({ message: "hi" });
+    expect(created.conversationId).toBe(id);
+    const sent = await client.sendMessage(id, "next");
+    expect(sent).toEqual({ conversationId: id });
   });
 
   it("tolerates sendMessage payloads without a step index", async () => {

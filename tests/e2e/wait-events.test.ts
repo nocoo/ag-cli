@@ -51,7 +51,7 @@ beforeAll(() => {
   instance = createSandbox("ag-cli-e2e-wait");
   initSummariesDb(instance);
   writeMockAgentapi(instance);
-  const created = runAgentapi(instance, ["new-conversation", "--message", "seed"]);
+  const created = runAgentapi(instance, ["new-conversation", "seed"]);
   conversationId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
 });
 
@@ -68,7 +68,7 @@ describe("wait and events e2e against dist/index.js", () => {
   });
 
   it("exits 124 on wait timeouts", async () => {
-    const stuck = runAgentapi(instance, ["new-conversation", "--message", "slow"], {
+    const stuck = runAgentapi(instance, ["new-conversation", "slow"], {
       AG_MOCK_AGENTAPI_MODE: "stuck",
     });
     const stuckId = (JSON.parse(stuck.stdout) as { conversationId: string }).conversationId;
@@ -98,13 +98,7 @@ describe("wait and events e2e against dist/index.js", () => {
       2500,
     );
     await new Promise((resolve) => setTimeout(resolve, 400));
-    runAgentapi(instance, [
-      "send-message",
-      "--conversation-id",
-      conversationId,
-      "--message",
-      "trigger events",
-    ]);
+    runAgentapi(instance, ["send-message", conversationId, "trigger events"]);
     const after = await eventsPromise;
     const afterEvents = after.stdout
       .split("\n")

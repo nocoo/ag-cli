@@ -60,7 +60,7 @@ afterEach(() => {
 async function preparedWorker(instance: Sandbox, mode?: string): Promise<string> {
   initSummariesDb(instance);
   writeMockAgentapi(instance);
-  const result = runAgentapi(instance, ["new-conversation", "--message", "seed"], {
+  const result = runAgentapi(instance, ["new-conversation", "seed"], {
     ...(mode === undefined ? {} : { AG_MOCK_AGENTAPI_MODE: mode }),
   });
   return (JSON.parse(result.stdout) as { conversationId: string }).conversationId;
@@ -902,7 +902,7 @@ describe("events command", () => {
       { abort: controller.signal },
     );
     await new Promise((resolve) => setTimeout(resolve, 120));
-    const created = runAgentapi(instance, ["new-conversation", "--message", "fresh"]);
+    const created = runAgentapi(instance, ["new-conversation", "fresh"]);
     const freshId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
     await new Promise((resolve) => setTimeout(resolve, 400));
     controller.abort();
@@ -955,7 +955,7 @@ describe("events command", () => {
     const instance = sandbox();
     initSummariesDb(instance);
     writeMockAgentapi(instance);
-    const created = runAgentapi(instance, ["new-conversation", "--message", "seed"]);
+    const created = runAgentapi(instance, ["new-conversation", "seed"]);
     const bad = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
     writeFileSync(
       join(logsDir(instance, bad), "transcript.jsonl"),
@@ -1070,7 +1070,7 @@ describe("events command", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(chunks.join("")).not.toContain("created");
 
-    const created = runAgentapi(instance, ["new-conversation", "--message", "late"]);
+    const created = runAgentapi(instance, ["new-conversation", "late"]);
     const lateId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
     await new Promise((resolve) => setTimeout(resolve, 300));
     controller.abort();

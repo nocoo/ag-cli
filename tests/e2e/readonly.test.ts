@@ -47,13 +47,7 @@ beforeAll(() => {
   instance = createSandbox("ag-cli-e2e-readonly");
   initSummariesDb(instance);
   writeMockAgentapi(instance);
-  const created = runAgentapi(instance, [
-    "new-conversation",
-    "--title",
-    "e2e job",
-    "--message",
-    "verify flows",
-  ]);
+  const created = runAgentapi(instance, ["new-conversation", "--title", "e2e job", "verify flows"]);
   expect(created.status).toBe(0);
   conversationId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
 });

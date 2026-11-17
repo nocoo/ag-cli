@@ -88,13 +88,7 @@ describe("SummariesReader queries", () => {
     initSummariesDb(instance);
     writeMockAgentapi(instance);
 
-    const created = runAgentapi(instance, [
-      "new-conversation",
-      "--title",
-      "wal check",
-      "--message",
-      "hi",
-    ]);
+    const created = runAgentapi(instance, ["new-conversation", "--title", "wal check", "hi"]);
     expect(created.status).toBe(0);
     const { conversationId } = JSON.parse(created.stdout) as { conversationId: string };
 

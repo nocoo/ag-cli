@@ -517,7 +517,7 @@ describe("run command", () => {
 
   it("a failed adoption does not delete a row another delivery successfully adopted (review F2)", async () => {
     const { instance } = await prepared();
-    const created = runAgentapi(instance, ["new-conversation", "--message", "outside"]);
+    const created = runAgentapi(instance, ["new-conversation", "outside"]);
     const outsideId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
 
     const marker = join(instance.root, "B-started");
@@ -715,7 +715,7 @@ describe("run command", () => {
     const parent = "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4";
     const child = (
       JSON.parse(
-        runAgentapi(instance, ["new-conversation", "--message", "stuck"], {
+        runAgentapi(instance, ["new-conversation", "stuck"], {
           AG_MOCK_AGENTAPI_MODE: "stuck",
         }).stdout,
       ) as { conversationId: string }
@@ -809,7 +809,7 @@ describe("send command", () => {
 
   it("auto-registers unmanaged uuid targets so watermarks are tracked", async () => {
     const { instance } = await prepared();
-    const created = runAgentapi(instance, ["new-conversation", "--message", "outside"]);
+    const created = runAgentapi(instance, ["new-conversation", "outside"]);
     const outsideId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
 
     const ctx = context(false, instance.env);
@@ -842,7 +842,7 @@ describe("send command", () => {
 
   it("rejects blocked conversations without --force", async () => {
     const { instance } = await prepared();
-    const created = runAgentapi(instance, ["new-conversation", "--message", "stuck"], {
+    const created = runAgentapi(instance, ["new-conversation", "stuck"], {
       AG_MOCK_AGENTAPI_MODE: "blocked",
     });
     const blockedId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
@@ -860,7 +860,7 @@ describe("send command", () => {
 
   it("marks queued sends to working conversations", async () => {
     const { instance } = await prepared();
-    const created = runAgentapi(instance, ["new-conversation", "--message", "slow"], {
+    const created = runAgentapi(instance, ["new-conversation", "slow"], {
       AG_MOCK_AGENTAPI_MODE: "stuck",
     });
     const stuckId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
@@ -935,7 +935,7 @@ describe("send command", () => {
 
   it("reports nameless preconditions and text receipts", async () => {
     const { instance } = await prepared();
-    const created = runAgentapi(instance, ["new-conversation", "--message", "slow"], {
+    const created = runAgentapi(instance, ["new-conversation", "slow"], {
       AG_MOCK_AGENTAPI_MODE: "stuck",
     });
     const stuckId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
@@ -952,7 +952,7 @@ describe("send command", () => {
 
   it("removes auto-registered rows when an unmanaged send fails", async () => {
     const { instance } = await prepared();
-    const created = runAgentapi(instance, ["new-conversation", "--message", "outside"]);
+    const created = runAgentapi(instance, ["new-conversation", "outside"]);
     const outsideId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
 
     const failing = context(false, {
@@ -1048,7 +1048,7 @@ describe("label command", () => {
       removed: true,
     });
 
-    const created = runAgentapi(instance, ["new-conversation", "--message", "plain"]);
+    const created = runAgentapi(instance, ["new-conversation", "plain"]);
     const plainId = (JSON.parse(created.stdout) as { conversationId: string }).conversationId;
     const interrupt = context(false, instance.env);
     await runCli(["interrupt", plainId, "--json"], interrupt);
@@ -1116,7 +1116,7 @@ describe("control commands", () => {
     const instance = sandbox();
     initSummariesDb(instance);
     writeMockAgentapi(instance);
-    const created = runAgentapi(instance, ["new-conversation", "--message", "x"]);
+    const created = runAgentapi(instance, ["new-conversation", "x"]);
     const conversationId = (JSON.parse(created.stdout) as { conversationId: string })
       .conversationId;
     const ctx = context(false, instance.env);
@@ -1137,7 +1137,7 @@ describe("control commands", () => {
     const instance = sandbox();
     initSummariesDb(instance);
     writeMockAgentapi(instance);
-    const created = runAgentapi(instance, ["new-conversation", "--message", "x"]);
+    const created = runAgentapi(instance, ["new-conversation", "x"]);
     const conversationId = (JSON.parse(created.stdout) as { conversationId: string })
       .conversationId;
 

@@ -116,7 +116,7 @@ export class AgentApiClient {
     model?: string;
     projectId?: string;
   }): Promise<{ conversationId: string }> {
-    const args = ["new-conversation", "--message", input.message];
+    const args = ["new-conversation"];
     if (input.title !== undefined) {
       args.push("--title", input.title);
     }
@@ -126,8 +126,10 @@ export class AgentApiClient {
     if (input.model !== undefined) {
       args.push("--model", input.model);
     }
+    args.push(input.message);
     const payload = await this.runAgentapi(args, input.projectId);
-    const conversationId = payload.conversationId;
+    const body = unwrapAgentapiResponse(payload, "newConversation");
+    const conversationId = body.conversationId;
     if (typeof conversationId !== "string" || conversationId.length === 0) {
       throw new AgCliError("runtime_error", `agentapi new-conversation returned no conversationId`);
     }
@@ -139,18 +141,20 @@ export class AgentApiClient {
     message: string,
     options: { title?: string; projectId?: string } = {},
   ): Promise<{ conversationId: string; stepIndex?: number }> {
-    const args = ["send-message", "--conversation-id", conversationId, "--message", message];
+    const args = ["send-message"];
     if (options.title !== undefined) {
       args.push("--title", options.title);
     }
+    args.push(conversationId, message);
     const payload = await this.runAgentapi(args, options.projectId);
-    const stepIndex = payload.stepIndex;
+    const body = unwrapAgentapiResponse(payload, "sendMessage");
+    const stepIndex = body.stepIndex;
     return { conversationId, ...(typeof stepIndex === "number" ? { stepIndex } : {}) };
   }
 
   async getConversationMetadata(conversationId: string): Promise<Record<string, unknown>> {
     assertUuid(conversationId, "upstream");
-    return this.runAgentapi(["get-conversation-metadata", "--conversation-id", conversationId]);
+    return this.runAgentapi(["get-conversation-metadata", conversationId]);
   }
 
   private async rpc<T>(method: string, body: Record<string, unknown>): Promise<T> {
@@ -292,4 +296,18 @@ export class AgentApiClient {
   async cancelCascadeInvocation(conversationId: string): Promise<void> {
     await this.rpc("CancelCascadeInvocation", { conversationId });
   }
+}
+
+function unwrapAgentapiResponse(
+  payload: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> {
+  const response = payload.response;
+  if (typeof response === "object" && response !== null) {
+    const inner = (response as Record<string, unknown>)[key];
+    if (typeof inner === "object" && inner !== null) {
+      return inner as Record<string, unknown>;
+    }
+  }
+  return payload;
 }

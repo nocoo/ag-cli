@@ -153,7 +153,6 @@ describe("writeMockAgentapi", () => {
       "new-conversation",
       "--title",
       "deps fix",
-      "--message",
       "upgrade deps",
     ]);
     expect(result.status).toBe(0);
@@ -185,16 +184,10 @@ describe("writeMockAgentapi", () => {
     initSummariesDb(instance);
     writeMockAgentapi(instance);
 
-    const created = runAgentapi(instance, ["new-conversation", "--message", "first"]);
+    const created = runAgentapi(instance, ["new-conversation", "first"]);
     const { conversationId } = JSON.parse(created.stdout) as { conversationId: string };
 
-    const sent = runAgentapi(instance, [
-      "send-message",
-      "--conversation-id",
-      conversationId,
-      "--message",
-      "second turn",
-    ]);
+    const sent = runAgentapi(instance, ["send-message", conversationId, "second turn"]);
     expect(sent.status).toBe(0);
 
     const steps = readTranscript(instance, conversationId);
@@ -208,20 +201,10 @@ describe("writeMockAgentapi", () => {
     initSummariesDb(instance);
     writeMockAgentapi(instance);
 
-    const created = runAgentapi(instance, [
-      "new-conversation",
-      "--title",
-      "meta check",
-      "--message",
-      "hi",
-    ]);
+    const created = runAgentapi(instance, ["new-conversation", "--title", "meta check", "hi"]);
     const { conversationId } = JSON.parse(created.stdout) as { conversationId: string };
 
-    const result = runAgentapi(instance, [
-      "get-conversation-metadata",
-      "--conversation-id",
-      conversationId,
-    ]);
+    const result = runAgentapi(instance, ["get-conversation-metadata", conversationId]);
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
       conversation_id: conversationId,
@@ -234,7 +217,7 @@ describe("writeMockAgentapi", () => {
     initSummariesDb(instance);
     writeMockAgentapi(instance);
 
-    const created = runAgentapi(instance, ["new-conversation", "--message", "needs approval"], {
+    const created = runAgentapi(instance, ["new-conversation", "needs approval"], {
       AG_MOCK_AGENTAPI_MODE: "blocked",
     });
     const { conversationId } = JSON.parse(created.stdout) as { conversationId: string };

@@ -346,18 +346,37 @@ function runTurn(db, id, title, message) {
   saveSummary(db, id, title, inbound + 3, "CASCADE_RUN_STATUS_IDLE", 0, inbound);
 }
 
-function parseArgs(argv) {
-  const parsed = { _: [] };
-  for (let i = 0; i < argv.length; i++) {
+function parseFlags(argv, allowed) {
+  const flags = {};
+  let i = 0;
+  while (i < argv.length) {
     const arg = argv[i];
-    if (arg.startsWith("--") && i + 1 < argv.length) {
-      parsed[arg.slice(2)] = argv[i + 1];
+    if (!arg.startsWith("-") || arg === "-") {
+      break;
+    }
+    if (arg === "--") {
       i += 1;
+      break;
+    }
+    const raw = arg.startsWith("--") ? arg.slice(2) : arg.slice(1);
+    const eq = raw.indexOf("=");
+    const key = eq >= 0 ? raw.slice(0, eq) : raw;
+    if (!allowed.includes(key)) {
+      process.stderr.write("flag provided but not defined: -" + key + "\\n");
+      process.exit(2);
+    }
+    if (eq >= 0) {
+      flags[key] = raw.slice(eq + 1);
+      i += 1;
+    } else if (i + 1 < argv.length) {
+      flags[key] = argv[i + 1];
+      i += 2;
     } else {
-      parsed._.push(arg);
+      process.stderr.write("flag needs an argument: -" + key + "\\n");
+      process.exit(2);
     }
   }
-  return parsed;
+  return { flags, positional: argv.slice(i) };
 }
 
 function emit(payload) {
@@ -393,13 +412,14 @@ function deferTurn(id, title, message) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
-  const command = args._[0];
+  const argv = process.argv.slice(2);
+  const command = argv[0];
+  const rest = argv.slice(1);
   if (command === "__deferred") {
     const db = openDb();
-    const id = args._[1];
-    const title = args._[2] || "";
-    const message = args._[3] || "";
+    const id = rest[0];
+    const title = rest[1] || "";
+    const message = rest[2] || "";
     ensureConversation(id);
     db.prepare(
       "INSERT INTO conversation_summaries (conversation_id, title) VALUES (?, ?)" +
@@ -412,10 +432,13 @@ function main() {
   const db = openDb();
 
   if (command === "new-conversation") {
+    const { flags, positional } = parseFlags(rest, ["model", "title", "profile"]);
+    const prompt = positional[0] || "";
+    const title = flags.title || "";
     const id = randomUUID();
     ensureConversation(id);
     if (MODE === "async") {
-      deferTurn(id, args.title || "", args.message || "");
+      deferTurn(id, title, prompt);
       emit({ conversationId: id });
       return;
     }
@@ -423,19 +446,21 @@ function main() {
       "INSERT INTO conversation_summaries (conversation_id, title, workspace_uris) VALUES (?, ?, ?)"
     ).run(
       id,
-      args.title || "",
+      title,
       JSON.stringify({
         ls: process.env.ANTIGRAVITY_LS_ADDRESS || null,
         csrf: process.env.ANTIGRAVITY_CSRF_TOKEN || null,
         project: process.env.ANTIGRAVITY_PROJECT_ID || null,
       })
     );
-    runTurn(db, id, args.title || "", args.message || "");
+    runTurn(db, id, title, prompt);
     emit({ conversationId: id });
     return;
   }
   if (command === "send-message") {
-    const id = args["conversation-id"];
+    const { flags, positional } = parseFlags(rest, ["title"]);
+    const id = positional[0];
+    const content = positional[1] || "";
     const row = db
       .prepare("SELECT title FROM conversation_summaries WHERE conversation_id = ?")
       .get(id);
@@ -444,20 +469,22 @@ function main() {
       process.exit(1);
     }
     ensureConversation(id);
+    const title = flags.title || row.title || "";
     if (MODE === "async") {
-      deferTurn(id, row.title || "", args.message || "");
+      deferTurn(id, title, content);
       emit({ conversationId: id, stepIndex: lastStepIndex(id) + 1 });
       return;
     }
     const inbound = lastStepIndex(id) + 1;
-    runTurn(db, id, row.title || "", args.message || "");
+    runTurn(db, id, title, content);
     emit({ conversationId: id, stepIndex: inbound });
     return;
   }
   if (command === "get-conversation-metadata") {
+    const { positional } = parseFlags(rest, []);
     const row = db
       .prepare("SELECT * FROM conversation_summaries WHERE conversation_id = ?")
-      .get(args["conversation-id"]);
+      .get(positional[0]);
     if (!row) {
       emit({ error: "not_found" });
       process.exit(1);
