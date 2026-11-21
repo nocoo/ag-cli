@@ -8,6 +8,7 @@ import {
   initSummariesDb,
   isolatedSubprocessEnv,
   type MockLanguageServer,
+  projectRpcResponses,
   readTranscript,
   type Sandbox,
   startMockLanguageServer,
@@ -44,7 +45,19 @@ beforeAll(async () => {
   instance = createSandbox("ag-cli-e2e-control");
   initSummariesDb(instance);
   writeMockAgentapi(instance);
-  server = await startMockLanguageServer({ responses: { CancelCascadeInvocation: {} } });
+  server = await startMockLanguageServer({
+    responses: {
+      ...projectRpcResponses([
+        { id: "proj-legacy", name: "his.fm", folderUris: ["file:///tmp/shared-repo"] },
+        {
+          id: "proj-editorial",
+          name: "🔊 his.fm 编辑部",
+          folderUris: ["file:///tmp/shared-repo"],
+        },
+      ]),
+      CancelCascadeInvocation: {},
+    },
+  });
   writeHubFile(instance, {
     pid: process.pid,
     httpPort: server.port,
@@ -161,7 +174,9 @@ describe("control e2e against dist/index.js", () => {
 
     const interrupt = await runCli(["interrupt", "e2e-worker", "--json"]);
     expect(interrupt.status).toBe(0);
-    expect(server.rpcCalls.find((call) => call.method === "CancelCascadeInvocation")).toBeDefined();
+    expect(
+      server.rpcCalls.find((call) => call.method === "CancelCascadeInvocation")?.body,
+    ).toMatchObject({ cascadeId: expect.any(String) });
 
     const kill = await runCli(["kill", "e2e-worker", "--json"]);
     expect(kill.status).toBe(0);
@@ -199,4 +214,30 @@ describe("control e2e against dist/index.js", () => {
     expect(wait.status).toBe(124);
     expect(JSON.parse(wait.stdout)).toMatchObject({ reason: "timeout", timedOut: true });
   }, 15000);
+
+  it("disambiguates shared-folder projects with --project against dist/index.js", async () => {
+    const ambiguous = await runCli([
+      "run",
+      "--bg",
+      "--json",
+      "--cwd",
+      "/tmp/shared-repo",
+      "shared test",
+    ]);
+    expect(ambiguous.status).toBe(1);
+    expect(JSON.parse(ambiguous.stderr)).toMatchObject({ error: { kind: "ambiguous_target" } });
+
+    const explicit = await runCli([
+      "run",
+      "--bg",
+      "--json",
+      "--cwd",
+      "/tmp/shared-repo",
+      "--project",
+      "🔊 his.fm 编辑部",
+      "shared test",
+    ]);
+    expect(explicit.status).toBe(0);
+    expect(JSON.parse(explicit.stdout)).toMatchObject({ projectId: "proj-editorial" });
+  });
 });

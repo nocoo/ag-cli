@@ -74,7 +74,7 @@ export async function runRunCommand(
 ): Promise<number> {
   const flags = parseCommandFlags(args, {
     booleans: ["bg", "reuse", "no-parent", "no-notify", "raw", "json"],
-    values: ["name", "cwd", "model", "profile", "title", "timeout", "parent"],
+    values: ["name", "cwd", "project", "model", "profile", "title", "timeout", "parent"],
     repeatables: ["label"],
   });
   if (flags.positionals.length === 0) {
@@ -96,6 +96,10 @@ export async function runRunCommand(
   }
   if (flags.flags.has("reuse") && name === undefined) {
     throw new AgCliError("invalid_usage", "--reuse requires --name");
+  }
+  const rawProject = flags.values.get("project");
+  if (rawProject !== undefined && rawProject.trim().length === 0) {
+    throw new AgCliError("invalid_usage", "--project requires a non-empty project id or name");
   }
   const timeoutSec = parseTimeout(flags.values.get("timeout"));
   const labelPairs = flags.repeatable.get("label") ?? [];
@@ -131,6 +135,8 @@ export async function runRunCommand(
       parentId = `hc:${caller.terminalId}`;
     }
 
+    const explicitProject = rawProject?.trim() ?? templateDefaults?.project;
+    const hasExplicitCwd = flags.values.has("cwd") || templateDefaults?.cwd !== undefined;
     const cwd = flags.values.get("cwd") ?? templateDefaults?.cwd ?? process.cwd();
     const model = flags.values.get("model") ?? templateDefaults?.model ?? "flash";
     const client = await AgentApiClient.connect({
@@ -139,10 +145,25 @@ export async function runRunCommand(
       baseEnv: context.env,
     });
     let projectId: string | null = null;
-    try {
-      projectId = await client.resolveProjectIdForCwd(cwd);
-    } catch {
-      projectId = null;
+    if (explicitProject !== undefined) {
+      const matched = await client.resolveProject({ project: explicitProject });
+      projectId = matched?.id ?? null;
+    } else {
+      try {
+        const matched = await client.resolveProject({ cwd });
+        projectId = matched?.id ?? null;
+      } catch (error) {
+        if (error instanceof AgCliError && error.kind === "ambiguous_target") {
+          throw error;
+        }
+        projectId = null;
+      }
+      if (projectId === null && !hasExplicitCwd) {
+        const ambientProject = context.env.ANTIGRAVITY_PROJECT_ID?.trim();
+        if (ambientProject !== undefined && ambientProject.length > 0) {
+          projectId = ambientProject;
+        }
+      }
     }
 
     const combinedPrompt =
@@ -199,7 +220,7 @@ export async function runRunCommand(
         try {
           await client.sendMessage(existing.conversationId, message, {
             title: flags.values.get("title"),
-            projectId: projectId ?? undefined,
+            projectId: existing.projectId ?? projectId ?? undefined,
           });
           store.commitDelivery(existing.conversationId, ticket);
         } catch (error) {
@@ -223,7 +244,7 @@ export async function runRunCommand(
             title: existing.name as string,
             reused: true,
             model: existing.model ?? model,
-            projectId: existing.projectId,
+            projectId: existing.projectId ?? projectId,
             cwd: existing.cwd ?? cwd,
             parentId: existing.parentId,
             watermarkStep,

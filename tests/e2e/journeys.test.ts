@@ -91,6 +91,7 @@ describe("full user journeys against the built cli from an unrelated cwd", () =>
         model: "gemini-3.8-flash-medium",
         profile: "verifier",
         cwd: "/tmp/verify",
+        project: "",
       },
     ]);
   });

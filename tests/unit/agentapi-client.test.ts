@@ -9,6 +9,8 @@ import {
   createSandbox,
   initSummariesDb,
   type MockLanguageServer,
+  type MockRpcOptions,
+  projectRpcResponses,
   type Sandbox,
   startMockLanguageServer,
   writeHubFile,
@@ -36,9 +38,10 @@ afterEach(async () => {
 async function connectedClient(
   instance: Sandbox,
   options: {
-    responses?: Record<string, unknown>;
+    responses?: MockRpcOptions["responses"];
     statusCodes?: Record<string, number>;
     projectId?: string;
+    baseEnv?: Record<string, string | undefined>;
   } = {},
 ): Promise<AgentApiClient> {
   writeMockAgentapi(instance);
@@ -58,6 +61,7 @@ async function connectedClient(
     antigravityDir: instance.antigravityDir,
     agentapiBin: instance.agentapiBin,
     projectId: options.projectId,
+    baseEnv: options.baseEnv,
   });
 }
 
@@ -149,20 +153,69 @@ describe("agentapi subprocess wrappers", () => {
       .filter(Boolean)
       .map((line) => JSON.parse(line) as { args: string[]; project: string | null });
     const call = calls.find((entry) => entry.args.includes("--model"));
-    expect(call?.args).toEqual(["new-conversation", "--model", "pro", "modelled"]);
+    expect(call?.args).toEqual(["new-conversation", "--model", "pro", "--", "modelled"]);
     expect(call?.project).toBe("proj-call");
+  });
+
+  it("passes leading-dash prompts safely after -- in newConversation and sendMessage", async () => {
+    const instance = sandbox();
+    initSummariesDb(instance);
+    const client = await connectedClient(instance);
+
+    const created = await client.newConversation({ message: "- bullet item" });
+    const sent = await client.sendMessage(created.conversationId, "--flag-like body");
+    expect(sent.conversationId).toBe(created.conversationId);
+
+    const calls = readFileSync(join(instance.root, "mock-agentapi-calls.jsonl"), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { args: string[] });
+    expect(calls.map((c) => c.args)).toEqual([
+      ["new-conversation", "--", "- bullet item"],
+      ["send-message", "--", created.conversationId, "--flag-like body"],
+    ]);
+  });
+
+  it("clears inherited ANTIGRAVITY_PROJECT_ID when unbound while preserving ANTIGRAVITY_SOURCE_METADATA", async () => {
+    const instance = sandbox();
+    initSummariesDb(instance);
+    const client = await connectedClient(instance, {
+      baseEnv: {
+        ...process.env,
+        ANTIGRAVITY_PROJECT_ID: "stale-parent-proj",
+        ANTIGRAVITY_SOURCE_METADATA: '{"tool":{"name":"test"}}',
+      },
+    });
+    writeFileSync(
+      instance.agentapiBin,
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        `fs.writeFileSync(${JSON.stringify(join(instance.root, "captured-env.json"))}, JSON.stringify({ project: process.env.ANTIGRAVITY_PROJECT_ID ?? null, source: process.env.ANTIGRAVITY_SOURCE_METADATA ?? null }));`,
+        'console.log(JSON.stringify({ conversationId: "11111111-1111-4111-8111-111111111111" }));',
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    await client.newConversation({ message: "unbound" });
+    const captured = JSON.parse(readFileSync(join(instance.root, "captured-env.json"), "utf8")) as {
+      project: string | null;
+      source: string | null;
+    };
+    expect(captured).toEqual({
+      project: null,
+      source: '{"tool":{"name":"test"}}',
+    });
   });
 
   it("decodes file uris when matching project folders", async () => {
     const instance = sandbox();
     const client = await connectedClient(instance, {
-      responses: {
-        ListProjects: {
-          projects: [{ projectId: "proj-space", folderUri: "file:///tmp/a%20b" }],
-        },
-      },
+      responses: projectRpcResponses([
+        { id: "proj-space", name: "space", folderUris: ["file:///tmp/a%20b"] },
+      ]),
     });
-    expect(await client.resolveProjectIdForCwd("/tmp/a b")).toBe("proj-space");
+    expect(await client.resolveProject({ cwd: "/tmp/a b" })).toMatchObject({ id: "proj-space" });
   });
 
   it("sendMessage and getConversationMetadata round-trip", async () => {
@@ -180,8 +233,10 @@ describe("agentapi subprocess wrappers", () => {
 
     const metadata = await client.getConversationMetadata(created.conversationId);
     expect(metadata).toMatchObject({
-      conversation_id: created.conversationId,
-      status: "CASCADE_RUN_STATUS_IDLE",
+      metadata: {
+        conversation_id: created.conversationId,
+        status: "CASCADE_RUN_STATUS_IDLE",
+      },
     });
 
     const calls = readFileSync(join(instance.root, "mock-agentapi-calls.jsonl"), "utf8")
@@ -189,8 +244,8 @@ describe("agentapi subprocess wrappers", () => {
       .filter(Boolean)
       .map((line) => JSON.parse(line) as { command: string; args: string[] });
     expect(calls.map((c) => c.args)).toEqual([
-      ["new-conversation", "first"],
-      ["send-message", "--title", "turn 2", created.conversationId, "second turn"],
+      ["new-conversation", "--", "first"],
+      ["send-message", "--title", "turn 2", "--", created.conversationId, "second turn"],
       ["get-conversation-metadata", created.conversationId],
     ]);
   });
@@ -547,67 +602,137 @@ describe("Connect RPC helpers", () => {
   it("ignores project folders with unparsable file uris", async () => {
     const instance = sandbox();
     const client = await connectedClient(instance, {
-      responses: {
-        ListProjects: {
-          projects: [{ projectId: "proj-bad", folderUri: "file://%%" }],
-        },
-      },
+      responses: projectRpcResponses([{ id: "proj-bad", name: "bad", folderUris: ["file://%%"] }]),
     });
-    expect(await client.resolveProjectIdForCwd("/tmp/anything")).toBeNull();
+    expect(await client.resolveProject({ cwd: "/tmp/anything" })).toBeNull();
   });
 
-  it("listProjects and readProject call the language server with the csrf token", async () => {
+  it("listProjects and readProject call the language server with real 2.34.0 payloads", async () => {
     const instance = sandbox();
     const client = await connectedClient(instance, {
       responses: {
         ListProjects: {
-          projects: [
-            { projectId: "proj-a", folderUri: "file:///tmp/repo-a" },
-            { projectId: "proj-b", folderUri: "/tmp/repo-b" },
-          ],
+          projectIds: ["proj-b", "outside-of-project", "proj-a", "proj-missing"],
         },
-        ReadProject: { project: { projectId: "proj-a", folderUri: "file:///tmp/repo-a" } },
+        ReadProject: (raw: unknown) => {
+          const { id } = JSON.parse(String(raw)) as { id?: string };
+          if (id === "proj-a") {
+            return {
+              project: {
+                id: "proj-a",
+                name: "alpha",
+                projectResources: {
+                  resources: [
+                    null,
+                    {},
+                    { gitFolder: { folderUri: "file:///tmp/repo-a" } },
+                    { folderUri: "file:///tmp/repo-a" },
+                    { folderUri: "/tmp/repo-extra" },
+                  ],
+                },
+              },
+            };
+          }
+          if (id === "proj-b") {
+            return {
+              project: {
+                id: "proj-b",
+                projectResources: { resources: [{ folderUri: "/tmp/repo-b" }] },
+              },
+            };
+          }
+          return {};
+        },
       },
     });
 
     const projects = await client.listProjects();
-    expect(projects).toHaveLength(2);
+    expect(projects).toEqual([
+      { id: "proj-b", name: "", folderUris: ["/tmp/repo-b"] },
+      {
+        id: "proj-a",
+        name: "alpha",
+        folderUris: ["file:///tmp/repo-a", "/tmp/repo-extra"],
+      },
+    ]);
 
     const project = await client.readProject("proj-a");
-    expect(project).toMatchObject({ projectId: "proj-a" });
+    expect(project).toEqual({
+      id: "proj-a",
+      name: "alpha",
+      folderUris: ["file:///tmp/repo-a", "/tmp/repo-extra"],
+    });
+    expect(await client.readProject("proj-missing")).toBeNull();
 
     const server = servers[0];
     const listCall = server?.rpcCalls.find((call) => call.method === "ListProjects");
     expect(listCall?.csrf).toBe(server?.csrfToken);
+    const readCall = server?.rpcCalls.find((call) => call.method === "ReadProject");
+    expect(readCall?.body).toMatchObject({ id: expect.any(String) });
   });
 
-  it("resolveProjectIdForCwd matches folderUri with and without the file scheme", async () => {
+  it("returns empty array when ListProjects omits projectIds", async () => {
     const instance = sandbox();
     const client = await connectedClient(instance, {
-      responses: {
-        ListProjects: {
-          projects: [
-            { projectId: "proj-a", folderUri: "file:///tmp/repo-a" },
-            { projectId: "proj-b", folderUri: "/tmp/repo-b" },
-            { projectId: "proj-c" },
-          ],
-        },
-      },
+      responses: { ListProjects: {} },
     });
-
-    expect(await client.resolveProjectIdForCwd("/tmp/repo-a")).toBe("proj-a");
-    expect(await client.resolveProjectIdForCwd("/tmp/repo-b")).toBe("proj-b");
-    expect(await client.resolveProjectIdForCwd("/tmp/unknown")).toBeNull();
+    expect(await client.listProjects()).toEqual([]);
   });
 
-  it("cancelCascadeInvocation posts the conversation id and succeeds on 200", async () => {
+  it("resolveProject supports exact id, exact name, ambiguity errors, and cwd matching", async () => {
+    const instance = sandbox();
+    const client = await connectedClient(instance, {
+      responses: projectRpcResponses([
+        { id: "proj-a", name: "his.fm", folderUris: ["file:///tmp/his.fm"] },
+        { id: "proj-b", name: "🔊 his.fm 编辑部", folderUris: ["file:///tmp/his.fm"] },
+        { id: "proj-c", name: "dup", folderUris: ["/tmp/dup-1"] },
+        { id: "proj-d", name: "dup", folderUris: ["/tmp/dup-2"] },
+        { id: "proj-e", name: "empty" },
+      ]),
+    });
+
+    expect(await client.resolveProject({ project: "proj-b" })).toMatchObject({
+      id: "proj-b",
+      name: "🔊 his.fm 编辑部",
+    });
+    expect(await client.resolveProject({ project: "his.fm" })).toMatchObject({ id: "proj-a" });
+    expect(await client.resolveProject({ cwd: "/tmp/dup-2" })).toMatchObject({ id: "proj-d" });
+    expect(await client.resolveProject({ cwd: "/tmp/unknown" })).toBeNull();
+    expect(await client.resolveProject({})).toBeNull();
+
+    await expect(client.resolveProject({ project: "   " })).rejects.toMatchObject({
+      kind: "invalid_usage",
+    });
+    await expect(client.resolveProject({ project: "missing" })).rejects.toMatchObject({
+      kind: "not_found",
+    });
+    await expect(client.resolveProject({ project: "dup" })).rejects.toMatchObject({
+      kind: "ambiguous_target",
+    });
+
+    try {
+      await client.resolveProject({ cwd: "/tmp/his.fm" });
+      expect.unreachable("must throw");
+    } catch (error) {
+      expect((error as AgCliError).kind).toBe("ambiguous_target");
+      expect((error as AgCliError).message).toContain("proj-a");
+      expect((error as AgCliError).message).toContain("proj-b");
+      expect((error as AgCliError).message).toContain("his.fm");
+      expect((error as AgCliError).message).toContain("🔊 his.fm 编辑部");
+    }
+  });
+
+  it("cancelCascadeInvocation posts cascadeId and succeeds on 200", async () => {
     const instance = sandbox();
     const client = await connectedClient(instance, { responses: { CancelCascadeInvocation: {} } });
 
     await client.cancelCascadeInvocation("990014f6-f6d1-4567-adcf-6182cead394c");
     const server = servers[0];
     const cancel = server?.rpcCalls.find((call) => call.method === "CancelCascadeInvocation");
-    expect(cancel).toMatchObject({ csrf: server?.csrfToken });
+    expect(cancel).toMatchObject({
+      csrf: server?.csrfToken,
+      body: { cascadeId: "990014f6-f6d1-4567-adcf-6182cead394c" },
+    });
   });
 
   it("rejects RPC failures with a clear runtime error", async () => {

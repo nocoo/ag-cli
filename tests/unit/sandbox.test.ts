@@ -207,8 +207,14 @@ describe("writeMockAgentapi", () => {
     const result = runAgentapi(instance, ["get-conversation-metadata", conversationId]);
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      conversation_id: conversationId,
-      title: "meta check",
+      response: {
+        conversationMetadata: {
+          metadata: {
+            conversation_id: conversationId,
+            title: "meta check",
+          },
+        },
+      },
     });
   });
 

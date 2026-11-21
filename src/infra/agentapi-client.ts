@@ -11,8 +11,22 @@ import { type DaemonCandidate, discoverDaemon, type HealthProbe } from "./daemon
 const execFileAsync = promisify(execFile);
 
 export interface ProjectSummary {
-  projectId?: string;
-  folderUri?: string;
+  id: string;
+  name: string;
+  folderUris: string[];
+}
+
+interface RawProjectResource {
+  folderUri?: unknown;
+  gitFolder?: { folderUri?: unknown } | null;
+}
+
+interface RawProject {
+  id?: unknown;
+  name?: unknown;
+  projectResources?: {
+    resources?: unknown;
+  } | null;
 }
 
 export class AgentApiClient {
@@ -72,6 +86,8 @@ export class AgentApiClient {
     const projectId = projectIdOverride ?? this.projectId;
     if (projectId !== undefined && projectId.length > 0) {
       env.ANTIGRAVITY_PROJECT_ID = projectId;
+    } else {
+      delete env.ANTIGRAVITY_PROJECT_ID;
     }
     return env;
   }
@@ -126,7 +142,7 @@ export class AgentApiClient {
     if (input.model !== undefined) {
       args.push("--model", input.model);
     }
-    args.push(input.message);
+    args.push("--", input.message);
     const payload = await this.runAgentapi(args, input.projectId);
     const body = unwrapAgentapiResponse(payload, "newConversation");
     const conversationId = body.conversationId;
@@ -145,7 +161,7 @@ export class AgentApiClient {
     if (options.title !== undefined) {
       args.push("--title", options.title);
     }
-    args.push(conversationId, message);
+    args.push("--", conversationId, message);
     const payload = await this.runAgentapi(args, options.projectId);
     const body = unwrapAgentapiResponse(payload, "sendMessage");
     const stepIndex = body.stepIndex;
@@ -154,7 +170,8 @@ export class AgentApiClient {
 
   async getConversationMetadata(conversationId: string): Promise<Record<string, unknown>> {
     assertUuid(conversationId, "upstream");
-    return this.runAgentapi(["get-conversation-metadata", conversationId]);
+    const payload = await this.runAgentapi(["get-conversation-metadata", conversationId]);
+    return unwrapAgentapiResponse(payload, "conversationMetadata");
   }
 
   private async rpc<T>(method: string, body: Record<string, unknown>): Promise<T> {
@@ -254,48 +271,136 @@ export class AgentApiClient {
   }
 
   async listProjects(): Promise<ProjectSummary[]> {
-    const payload = await this.rpc<{ projects?: ProjectSummary[] }>("ListProjects", {});
-    return payload.projects ?? [];
+    const payload = await this.rpc<{ projectIds?: unknown }>("ListProjects", {});
+    const ids = Array.isArray(payload.projectIds)
+      ? payload.projectIds.filter(
+          (id): id is string =>
+            typeof id === "string" && id.length > 0 && id !== "outside-of-project",
+        )
+      : [];
+    const loaded = await Promise.all(ids.map((id) => this.readProject(id)));
+    return loaded
+      .filter((project): project is ProjectSummary => project !== null)
+      .sort((a, b) => compareStrings(a.name, b.name) || compareStrings(a.id, b.id));
   }
 
-  async readProject(projectId: string): Promise<ProjectSummary | null> {
-    const payload = await this.rpc<{ project?: ProjectSummary | null }>("ReadProject", {
-      projectId,
-    });
-    return payload.project ?? null;
-  }
-
-  async resolveProjectIdForCwd(cwd: string): Promise<string | null> {
-    const projects = await this.listProjects();
-    const normalize = (value: string): string => {
-      try {
-        return realpathSync(value);
-      } catch {
-        return resolvePath(value);
-      }
+  async readProject(id: string): Promise<ProjectSummary | null> {
+    const payload = await this.rpc<{ project?: RawProject | null }>("ReadProject", { id });
+    const raw = payload.project;
+    if (raw === null || raw === undefined || typeof raw.id !== "string" || raw.id.length === 0) {
+      return null;
+    }
+    return {
+      id: raw.id,
+      name: typeof raw.name === "string" ? raw.name : "",
+      folderUris: extractFolderUris(raw.projectResources?.resources),
     };
-    const target = normalize(cwd);
-    const match = projects.find((project) => {
-      const folder = project.folderUri ?? "";
-      if (folder.length === 0) {
-        return false;
+  }
+
+  async resolveProject(input: { project?: string; cwd?: string }): Promise<ProjectSummary | null> {
+    const projects = await this.listProjects();
+    if (input.project !== undefined) {
+      const query = input.project.trim();
+      if (query.length === 0) {
+        throw new AgCliError("invalid_usage", "--project requires a non-empty project id or name");
       }
-      let decoded = folder;
-      if (folder.startsWith("file://")) {
-        try {
-          decoded = fileURLToPath(folder);
-        } catch {
-          return false;
-        }
+      const byId = projects.find((project) => project.id === query);
+      if (byId !== undefined) {
+        return byId;
       }
-      return normalize(decoded) === target;
-    });
-    return match?.projectId ?? null;
+      const byName = projects.filter((project) => project.name === query);
+      if (byName.length === 1) {
+        return byName[0] as ProjectSummary;
+      }
+      if (byName.length > 1) {
+        throw new AgCliError(
+          "ambiguous_target",
+          `multiple Antigravity projects are named ${query}: ${formatProjectCandidates(byName)}`,
+          { hint: "Pass --project <id> using the exact UUID from `ag-cli projects`." },
+        );
+      }
+      throw new AgCliError("not_found", `project ${query} not found`, {
+        hint: "Run `ag-cli projects` to list registered Antigravity projects.",
+      });
+    }
+    if (input.cwd !== undefined) {
+      const target = normalizeFsPath(input.cwd);
+      const matches = projects.filter((project) =>
+        project.folderUris.some((uri) => decodeFolderUri(uri) === target),
+      );
+      if (matches.length === 0) {
+        return null;
+      }
+      if (matches.length === 1) {
+        return matches[0] as ProjectSummary;
+      }
+      throw new AgCliError(
+        "ambiguous_target",
+        `multiple Antigravity projects share ${input.cwd}: ${formatProjectCandidates(matches)}`,
+        { hint: "Pass --project <id|name> to disambiguate, or run `ag-cli projects`." },
+      );
+    }
+    return null;
   }
 
   async cancelCascadeInvocation(conversationId: string): Promise<void> {
-    await this.rpc("CancelCascadeInvocation", { conversationId });
+    await this.rpc("CancelCascadeInvocation", { cascadeId: conversationId });
   }
+}
+
+function extractFolderUris(resources: unknown): string[] {
+  if (!Array.isArray(resources)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const uris: string[] = [];
+  for (const item of resources) {
+    if (typeof item !== "object" || item === null) {
+      continue;
+    }
+    const resource = item as RawProjectResource;
+    const gitUri = resource.gitFolder?.folderUri;
+    const directUri = resource.folderUri;
+    const candidate =
+      typeof gitUri === "string" && gitUri.length > 0
+        ? gitUri
+        : typeof directUri === "string" && directUri.length > 0
+          ? directUri
+          : undefined;
+    if (candidate !== undefined && !seen.has(candidate)) {
+      seen.add(candidate);
+      uris.push(candidate);
+    }
+  }
+  return uris;
+}
+
+function normalizeFsPath(value: string): string {
+  try {
+    return realpathSync(value);
+  } catch {
+    return resolvePath(value);
+  }
+}
+
+function decodeFolderUri(uri: string): string | null {
+  let decoded = uri;
+  if (uri.startsWith("file://")) {
+    try {
+      decoded = fileURLToPath(uri);
+    } catch {
+      return null;
+    }
+  }
+  return normalizeFsPath(decoded);
+}
+
+function compareStrings(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function formatProjectCandidates(projects: ProjectSummary[]): string {
+  return projects.map((project) => `${project.name || "(unnamed)"} (${project.id})`).join(", ");
 }
 
 function unwrapAgentapiResponse(

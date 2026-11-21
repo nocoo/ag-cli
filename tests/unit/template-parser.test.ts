@@ -27,7 +27,7 @@ afterEach(() => {
 describe("parseTemplate", () => {
   it("parses yaml frontmatter and the markdown preamble", () => {
     const parsed = parseTemplate(
-      "---\nname: browser-verifier\ndescription: Run UI verification\nmodel: gemini-3.8-flash-medium\nprofile: verifier\ncwd: /Users/nocoo/workspace/personal/clip\n---\nYou are a dedicated browser QA verifier.\nDo not modify repository source code.",
+      "---\nname: browser-verifier\ndescription: Run UI verification\nmodel: gemini-3.8-flash-medium\nprofile: verifier\ncwd: /Users/nocoo/workspace/personal/clip\nproject: proj-clip\n---\nYou are a dedicated browser QA verifier.\nDo not modify repository source code.",
     );
     expect(parsed).toEqual({
       name: "browser-verifier",
@@ -35,6 +35,7 @@ describe("parseTemplate", () => {
       model: "gemini-3.8-flash-medium",
       profile: "verifier",
       cwd: "/Users/nocoo/workspace/personal/clip",
+      project: "proj-clip",
       preamble: "You are a dedicated browser QA verifier.\nDo not modify repository source code.",
     });
   });
@@ -146,6 +147,7 @@ describe("real yaml frontmatter parsing (review F17)", () => {
     expect(() => parseTemplate("---\ncwd: [one, two]\n---\nBody.")).toThrow();
     expect(() => parseTemplate("---\nmodel: 42\n---\nBody.")).toThrow();
     expect(() => parseTemplate("---\nname: true\n---\nBody.")).toThrow();
+    expect(() => parseTemplate("---\nproject: 123\n---\nBody.")).toThrow();
     expect(() => parseTemplate("---\nprofile: { a: b }\n---\nBody.")).toThrow();
   });
 

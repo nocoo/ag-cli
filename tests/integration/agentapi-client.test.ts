@@ -4,6 +4,7 @@ import { openSummariesReader } from "../../src/infra/summaries-reader";
 import {
   createSandbox,
   initSummariesDb,
+  projectRpcResponses,
   readTranscript,
   type Sandbox,
   startMockLanguageServer,
@@ -76,7 +77,7 @@ describe("AgentApiClient end-to-end against the mock stack", () => {
     writeMockAgentapi(instance);
     const mock = await startMockLanguageServer({
       responses: {
-        ListProjects: { projects: [{ projectId: "proj-e2e", folderUri: "file:///tmp/e2e" }] },
+        ...projectRpcResponses([{ id: "proj-e2e", name: "e2e", folderUris: ["file:///tmp/e2e"] }]),
         CancelCascadeInvocation: {},
       },
     });
@@ -109,10 +110,10 @@ describe("AgentApiClient end-to-end against the mock stack", () => {
     });
     reader?.close();
 
-    expect(await client.resolveProjectIdForCwd("/tmp/e2e")).toBe("proj-e2e");
+    expect(await client.resolveProject({ cwd: "/tmp/e2e" })).toMatchObject({ id: "proj-e2e" });
     await client.cancelCascadeInvocation(created.conversationId);
     expect(
       mock.rpcCalls.find((call) => call.method === "CancelCascadeInvocation")?.body,
-    ).toMatchObject({ conversationId: created.conversationId });
+    ).toMatchObject({ cascadeId: created.conversationId });
   });
 });

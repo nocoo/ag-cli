@@ -7,6 +7,8 @@ import {
   createSandbox,
   initSummariesDb,
   type MockLanguageServer,
+  type MockRpcOptions,
+  projectRpcResponses,
   readMockAgentapiCalls,
   readTranscript,
   runAgentapi,
@@ -53,7 +55,7 @@ function stdoutJson<T>(ctx: CliContext): T {
 }
 
 async function prepared(
-  responses: Record<string, unknown> = {},
+  responses: MockRpcOptions["responses"] = {},
   statusCodes: Record<string, number> = {},
 ): Promise<{ instance: Sandbox; server: MockLanguageServer }> {
   const instance = sandbox();
@@ -180,9 +182,9 @@ describe("run command", () => {
   });
 
   it("resolves the project for --cwd and stores it", async () => {
-    const { instance } = await prepared({
-      ListProjects: { projects: [{ projectId: "proj-42", folderUri: `file:///tmp/widget` }] },
-    });
+    const { instance } = await prepared(
+      projectRpcResponses([{ id: "proj-42", name: "widget", folderUris: ["file:///tmp/widget"] }]),
+    );
     const ctx = context(false, instance.env);
     await runCli(
       ["run", "--bg", "--json", "--name", "widget", "--cwd", "/tmp/widget", "build it"],
@@ -194,11 +196,11 @@ describe("run command", () => {
 
   it("passes model and project id into the real dispatch argv and env (review F1)", async () => {
     const cwd = join("/tmp", "r2 project");
-    const { instance } = await prepared({
-      ListProjects: {
-        projects: [{ projectId: "wanted-project", folderUri: `file://${encodeURI(cwd)}` }],
-      },
-    });
+    const { instance } = await prepared(
+      projectRpcResponses([
+        { id: "wanted-project", name: "r2", folderUris: [`file://${encodeURI(cwd)}`] },
+      ]),
+    );
     const ctx = context(false, instance.env);
     await runCli(["run", "--bg", "--json", "--model", "pro", "--cwd", cwd, "build it"], ctx);
     expect(stdoutJson<{ model: string }>(ctx).model).toBe("pro");
@@ -229,6 +231,93 @@ describe("run command", () => {
     const reuseCall = readMockAgentapiCalls(instance).at(-1);
     expect(reuseCall?.project).toBe("wanted-project");
     expect(conversationId).toBeDefined();
+  });
+
+  it("disambiguates shared-folder projects with --project and fails cleanly on ambiguity", async () => {
+    const { instance } = await prepared(
+      projectRpcResponses([
+        { id: "proj-legacy", name: "his.fm", folderUris: ["file:///tmp/his.fm"] },
+        { id: "proj-editorial", name: "🔊 his.fm 编辑部", folderUris: ["file:///tmp/his.fm"] },
+      ]),
+    );
+
+    const ambiguous = context(false, instance.env);
+    const ambiguousCode = await runCli(
+      ["run", "--bg", "--json", "--cwd", "/tmp/his.fm", "write notes"],
+      ambiguous,
+    );
+    expect(ambiguousCode).toBe(1);
+    const err = JSON.parse(stderrText(ambiguous)) as { error: { kind: string; message: string } };
+    expect(err.error.kind).toBe("ambiguous_target");
+    expect(err.error.message).toContain("proj-legacy");
+    expect(err.error.message).toContain("proj-editorial");
+    expect(readMockAgentapiCalls(instance)).toHaveLength(0);
+
+    const explicitByName = context(false, instance.env);
+    expect(
+      await runCli(
+        [
+          "run",
+          "--bg",
+          "--json",
+          "--cwd",
+          "/tmp/his.fm",
+          "--project",
+          "🔊 his.fm 编辑部",
+          "--name",
+          "ed-task",
+          "write notes",
+        ],
+        explicitByName,
+      ),
+    ).toBe(0);
+    expect(stdoutJson<{ projectId: string | null }>(explicitByName).projectId).toBe(
+      "proj-editorial",
+    );
+    expect(readMockAgentapiCalls(instance).at(-1)?.project).toBe("proj-editorial");
+
+    const explicitById = context(false, instance.env);
+    expect(
+      await runCli(
+        [
+          "run",
+          "--bg",
+          "--json",
+          "--cwd",
+          "/tmp/his.fm",
+          "--project",
+          "proj-legacy",
+          "legacy task",
+        ],
+        explicitById,
+      ),
+    ).toBe(0);
+    expect(stdoutJson<{ projectId: string | null }>(explicitById).projectId).toBe("proj-legacy");
+  });
+
+  it("falls back to ambient ANTIGRAVITY_PROJECT_ID only when --cwd and --project are omitted", async () => {
+    const { instance } = await prepared();
+
+    const ambientCtx = context(false, {
+      ...instance.env,
+      ANTIGRAVITY_PROJECT_ID: "ambient-proj",
+    });
+    expect(await runCli(["run", "--bg", "--json", "ambient task"], ambientCtx)).toBe(0);
+    expect(stdoutJson<{ projectId: string | null }>(ambientCtx).projectId).toBe("ambient-proj");
+    expect(readMockAgentapiCalls(instance).at(-1)?.project).toBe("ambient-proj");
+
+    const explicitCwdCtx = context(false, {
+      ...instance.env,
+      ANTIGRAVITY_PROJECT_ID: "ambient-proj",
+    });
+    expect(
+      await runCli(
+        ["run", "--bg", "--json", "--cwd", "/tmp/unregistered", "other"],
+        explicitCwdCtx,
+      ),
+    ).toBe(0);
+    expect(stdoutJson<{ projectId: string | null }>(explicitCwdCtx).projectId).toBeNull();
+    expect(readMockAgentapiCalls(instance).at(-1)?.project).toBeNull();
   });
 
   it("reuses an active conversation with --reuse and advances the watermark", async () => {
@@ -375,6 +464,11 @@ describe("run command", () => {
     expect(
       await runCli(["run", "--bg", "--json", "--timeout", "-1", "task"], negativeTimeout),
     ).toBe(2);
+
+    const blankProject = context(false, instance.env);
+    expect(await runCli(["run", "--bg", "--json", "--project", "   ", "task"], blankProject)).toBe(
+      2,
+    );
 
     const calls = readMockAgentapiCalls(instance);
     expect(calls.filter((call) => call.command === "new-conversation")).toHaveLength(0);
@@ -1109,7 +1203,7 @@ describe("control commands", () => {
     expect(stdoutJson<{ interrupted: boolean }>(ctx).interrupted).toBe(true);
     expect(
       server.rpcCalls.find((call) => call.method === "CancelCascadeInvocation")?.body,
-    ).toMatchObject({ conversationId });
+    ).toMatchObject({ cascadeId: conversationId });
   });
 
   it("interrupt fails clearly without a healthy daemon", async () => {

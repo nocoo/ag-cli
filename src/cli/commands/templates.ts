@@ -19,6 +19,7 @@ export async function runTemplatesCommand(
     model: entry.template.model ?? "",
     profile: entry.template.profile ?? "",
     cwd: entry.template.cwd ?? "",
+    project: entry.template.project ?? "",
   }));
 
   const mode = resolveMode({

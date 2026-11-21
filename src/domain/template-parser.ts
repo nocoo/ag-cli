@@ -10,13 +10,14 @@ export interface ParsedTemplate {
   model?: string;
   profile?: string;
   cwd?: string;
+  project?: string;
   notify?: boolean;
   raw?: boolean;
   timeout?: number;
   preamble: string;
 }
 
-const STRING_FIELDS = ["name", "description", "model", "profile", "cwd"] as const;
+const STRING_FIELDS = ["name", "description", "model", "profile", "cwd", "project"] as const;
 const BOOLEAN_FIELDS = ["notify", "raw"] as const;
 const TEMPLATE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?([\s\S]*)$/;

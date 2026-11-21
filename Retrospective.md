@@ -226,3 +226,14 @@ with `bull`). Publishing under an owned user scope (`@nocoo/ag` with `publishCon
 "access": "public" }`) bypasses unscoped global similarity collisions while keeping the
 CLI binary (`ag-cli`), repository (`ag-cli`), env vars (`AG_CLI_*`), and error class
 (`AgCliError`) unchanged.
+
+## 2026-11-21 · Stale `dist/` and mock-driven contract drift against Antigravity 2.34.0
+
+**Symptoms**:
+1. Global `/opt/homebrew/bin/ag-cli` symlinked to this worktree continued executing the Nov 15 `dist/index.js` (`--message` flag) even after commit `4182d7b` (Nov 17) fixed `AgentApiClient` positional args in `src/`, causing `agentapi failed: flag provided but not defined: -message` in production.
+2. Live probes against Antigravity `2.34.0` revealed multiple mock-vs-daemon contract divergences: `ListProjects` returns `{ projectIds }`, `ReadProject` takes `{ id }` (returning `projectResources.resources`), `CancelCascadeInvocation` takes `{ cascadeId }` (returning HTTP 400 for `{ conversationId }`), Go `flag` rejects leading-`-` positional prompts without `--`, shared directories across multiple projects (e.g., `his.fm` and `🔊 his.fm 编辑部`) were ambiguous under `--cwd`-only lookup, and `childEnv` could leak ambient `ANTIGRAVITY_PROJECT_ID`.
+
+**Fixes & Prevention**:
+- Always run `bun run build` after source changes affecting symlinked global binaries, and smoke-test against live Antigravity daemon RPCs when protocol contracts evolve.
+- Align `MockLanguageServer` fixtures (`projectRpcResponses`) and `MOCK_AGENTAPI_SCRIPT` (`{ response: { conversationMetadata: ... } }`) strictly to observed Antigravity payloads rather than assumed shapes.
+- Require explicit `--project <id|name>` (discoverable via `ag-cli projects`) whenever multiple projects share a workspace folder instead of picking the first match.

@@ -6,6 +6,8 @@ import {
   createSandbox,
   initSummariesDb,
   type MockLanguageServer,
+  type MockRpcOptions,
+  projectRpcResponses,
   readTranscript,
   type Sandbox,
   startMockLanguageServer,
@@ -49,11 +51,11 @@ function stdoutJson<T>(ctx: CliContext): T {
   return JSON.parse(stdoutText(ctx)) as T;
 }
 
-async function prepared(): Promise<Sandbox> {
+async function prepared(responses: MockRpcOptions["responses"] = {}): Promise<Sandbox> {
   const instance = sandbox();
   initSummariesDb(instance);
   writeMockAgentapi(instance);
-  const server = await startMockLanguageServer();
+  const server = await startMockLanguageServer({ responses });
   servers.push(server);
   writeHubFile(instance, {
     pid: process.pid,
@@ -78,7 +80,7 @@ function writeTemplate(instance: Sandbox): void {
   mkdirSync(join(instance.configDir, "templates"), { recursive: true });
   writeFileSync(
     join(instance.configDir, "templates", "browser-verifier.md"),
-    "---\nname: browser-verifier\ndescription: Run UI verification\nmodel: gemini-3.8-flash-medium\nprofile: verifier\ncwd: /tmp/verify\n---\nYou are a dedicated browser QA verifier.\nDo not modify repository source code.",
+    "---\nname: browser-verifier\ndescription: Run UI verification\nmodel: gemini-3.8-flash-medium\nprofile: verifier\ncwd: /tmp/verify\nproject: proj-tpl\n---\nYou are a dedicated browser QA verifier.\nDo not modify repository source code.",
   );
 }
 
@@ -92,7 +94,14 @@ describe("templates command", () => {
     expect(code).toBe(0);
     expect(
       stdoutJson<
-        Array<{ name: string; description: string; model: string; profile: string; cwd: string }>
+        Array<{
+          name: string;
+          description: string;
+          model: string;
+          profile: string;
+          cwd: string;
+          project: string;
+        }>
       >(ctx),
     ).toEqual([
       {
@@ -101,6 +110,7 @@ describe("templates command", () => {
         model: "gemini-3.8-flash-medium",
         profile: "verifier",
         cwd: "/tmp/verify",
+        project: "proj-tpl",
       },
     ]);
   });
@@ -127,9 +137,18 @@ describe("templates command", () => {
     expect(code).toBe(0);
     expect(
       stdoutJson<
-        Array<{ name: string; description: string; model: string; profile: string; cwd: string }>
+        Array<{
+          name: string;
+          description: string;
+          model: string;
+          profile: string;
+          cwd: string;
+          project: string;
+        }>
       >(ctx),
-    ).toEqual([{ name: "bare", description: "Tiny helper", model: "", profile: "", cwd: "" }]);
+    ).toEqual([
+      { name: "bare", description: "Tiny helper", model: "", profile: "", cwd: "", project: "" },
+    ]);
 
     const runCtx = context(false, instance.env);
     await runCli(["run", "--bg", "--json", "bare", "task"], runCtx);
@@ -148,7 +167,7 @@ describe("templates command", () => {
     const ctx = context(false, instance.env);
     await runCli(["templates", "--json"], ctx);
     expect(stdoutJson<Array<{ name: string; description: string; model: string }>>(ctx)).toEqual([
-      { name: "minimal", description: "", model: "pro", profile: "", cwd: "" },
+      { name: "minimal", description: "", model: "pro", profile: "", cwd: "", project: "" },
     ]);
   });
 
@@ -166,9 +185,61 @@ describe("templates command", () => {
   });
 });
 
+describe("projects command", () => {
+  it("lists registered projects in json and tty formats", async () => {
+    const instance = await prepared(
+      projectRpcResponses([
+        { id: "proj-1", name: "his.fm", folderUris: ["file:///Users/nocoo/workspace/his.fm"] },
+        { id: "proj-2", name: "", folderUris: [] },
+        {
+          id: "proj-3",
+          name: "🔊 his.fm 编辑部",
+          folderUris: ["file:///Users/nocoo/workspace/his.fm", "/tmp/extra"],
+        },
+      ]),
+    );
+
+    const jsonCtx = context(false, instance.env);
+    expect(await runCli(["projects", "--json"], jsonCtx)).toBe(0);
+    expect(stdoutJson<Array<{ id: string; name: string; folderUris: string[] }>>(jsonCtx)).toEqual([
+      { id: "proj-2", name: "", folderUris: [] },
+      { id: "proj-1", name: "his.fm", folderUris: ["file:///Users/nocoo/workspace/his.fm"] },
+      {
+        id: "proj-3",
+        name: "🔊 his.fm 编辑部",
+        folderUris: ["file:///Users/nocoo/workspace/his.fm", "/tmp/extra"],
+      },
+    ]);
+
+    const ttyCtx = context(true, instance.env);
+    expect(await runCli(["projects"], ttyCtx)).toBe(0);
+    const table = stdoutText(ttyCtx);
+    expect(table).toContain("ID");
+    expect(table).toContain("FOLDERS");
+    expect(table).toContain("proj-1");
+    expect(table).toContain("🔊 his.fm 编辑部");
+    expect(table).toContain("/Users/nocoo/workspace/his.fm, /tmp/extra");
+  });
+
+  it("rejects positional arguments and missing daemons", async () => {
+    const instance = await prepared();
+    const badArgs = context(false, instance.env);
+    expect(await runCli(["projects", "extra"], badArgs)).toBe(2);
+
+    const offline = sandbox();
+    const noDaemon = context(false, offline.env);
+    expect(await runCli(["projects", "--json"], noDaemon)).toBe(4);
+  });
+});
+
 describe("run with templates", () => {
   it("combines the template preamble with the prompt and honors template defaults", async () => {
-    const instance = await prepared();
+    const instance = await prepared(
+      projectRpcResponses([
+        { id: "proj-tpl", name: "tpl-project", folderUris: ["file:///tmp/tpl"] },
+        { id: "proj-other", name: "other-project", folderUris: ["file:///tmp/other"] },
+      ]),
+    );
     writeTemplate(instance);
 
     const ctx = context(false, instance.env);
@@ -178,7 +249,11 @@ describe("run with templates", () => {
     );
     expect(code).toBe(0);
     const payload = stdoutJson<{ model: string; cwd: string; projectId: string | null }>(ctx);
-    expect(payload).toMatchObject({ model: "gemini-3.8-flash-medium", cwd: "/tmp/verify" });
+    expect(payload).toMatchObject({
+      model: "gemini-3.8-flash-medium",
+      cwd: "/tmp/verify",
+      projectId: "proj-tpl",
+    });
 
     const conversationId = stdoutJson<{ conversationId: string }>(ctx).conversationId;
     const inbound = String(readTranscript(instance, conversationId)[0]?.content);
@@ -188,7 +263,12 @@ describe("run with templates", () => {
   });
 
   it("lets cli flags override template defaults", async () => {
-    const instance = await prepared();
+    const instance = await prepared(
+      projectRpcResponses([
+        { id: "proj-tpl", name: "tpl-project", folderUris: ["file:///tmp/tpl"] },
+        { id: "proj-other", name: "other-project", folderUris: ["file:///tmp/other"] },
+      ]),
+    );
     writeTemplate(instance);
 
     const ctx = context(false, instance.env);
@@ -201,15 +281,20 @@ describe("run with templates", () => {
         "pro",
         "--cwd",
         "/tmp/other",
+        "--project",
+        "proj-other",
         "browser-verifier",
         "task",
       ],
       ctx,
     );
-    expect(stdoutJson<{ model: string; cwd: string }>(ctx)).toMatchObject({
-      model: "pro",
-      cwd: "/tmp/other",
-    });
+    expect(stdoutJson<{ model: string; cwd: string; projectId: string | null }>(ctx)).toMatchObject(
+      {
+        model: "pro",
+        cwd: "/tmp/other",
+        projectId: "proj-other",
+      },
+    );
   });
 
   it("fails with not_found for unknown templates", async () => {
@@ -247,6 +332,7 @@ describe("schema command", () => {
       "kill",
       "rm",
       "interrupt",
+      "projects",
       "templates",
       "events",
       "status",
@@ -390,6 +476,7 @@ describe("schema command", () => {
     await outputRef(["get", "--json", "schema-run"], "getSnapshot");
     await outputRef(["ls", "--json"], "lsOutput");
     await outputRef(["label", "--json", "schema-run", "k=v"], "labelResult");
+    await outputRef(["projects", "--json"], "projectsOutput");
     await outputRef(["templates", "--json"], "templatesOutput");
     await outputRef(["status", "--json"], "statusReport");
     await outputRef(["kill", "--json", "schema-run"], "controlResult");

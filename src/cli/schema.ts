@@ -211,8 +211,21 @@ const $DEFS = {
       model: { type: "string" },
       profile: { type: "string" },
       cwd: { type: "string" },
+      project: { type: "string" },
     },
     ["name"],
+  ),
+  projectsOutput: {
+    type: "array",
+    items: { $ref: "#/$defs/projectRow" },
+  },
+  projectRow: objectSchema(
+    {
+      id: { type: "string" },
+      name: { type: "string" },
+      folderUris: { type: "array", items: { type: "string" } },
+    },
+    ["id", "name", "folderUris"],
   ),
   labelResult: objectSchema(
     {
@@ -350,6 +363,7 @@ export const CLI_SCHEMA = {
             { name: "--name", kind: "string" },
             { name: "--reuse", kind: "boolean" },
             { name: "--cwd", kind: "string" },
+            { name: "--project", kind: "string" },
             { name: "--model", kind: "string", default: "flash" },
             { name: "--profile", kind: "string" },
             { name: "--title", kind: "string" },
@@ -425,6 +439,7 @@ export const CLI_SCHEMA = {
           "controlResult",
         ),
         interrupt: commandSchema("<c>", [{ name: "--json", kind: "boolean" }], "controlResult"),
+        projects: commandSchema("", [{ name: "--json", kind: "boolean" }], "projectsOutput"),
         templates: commandSchema("", [{ name: "--json", kind: "boolean" }], "templatesOutput"),
         events: commandSchema(
           "",

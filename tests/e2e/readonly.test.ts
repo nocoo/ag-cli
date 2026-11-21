@@ -6,6 +6,7 @@ import {
   createSandbox,
   initSummariesDb,
   isolatedSubprocessEnv,
+  projectRpcResponses,
   runAgentapi,
   type Sandbox,
   startMockLanguageServer,
@@ -70,7 +71,11 @@ describe("read-only e2e against dist/index.js", () => {
   });
 
   it("reports daemon health in status --json", async () => {
-    const mock = await startMockLanguageServer();
+    const mock = await startMockLanguageServer({
+      responses: projectRpcResponses([
+        { id: "proj-e2e", name: "e2e-proj", folderUris: ["file:///tmp/e2e-proj"] },
+      ]),
+    });
     servers.push(mock);
     writeHubFile(instance, {
       pid: process.pid,
@@ -85,6 +90,12 @@ describe("read-only e2e against dist/index.js", () => {
     const payload = JSON.parse(result.stdout) as { daemon: { healthy: boolean; pid: number } };
     expect(payload.daemon.healthy).toBe(true);
     expect(payload.daemon.pid).toBe(process.pid);
+
+    const projects = await runCli(["projects", "--json"]);
+    expect(projects.status).toBe(0);
+    expect(JSON.parse(projects.stdout)).toEqual([
+      { id: "proj-e2e", name: "e2e-proj", folderUris: ["file:///tmp/e2e-proj"] },
+    ]);
   });
 
   it("lists the conversation with derived status done", async () => {

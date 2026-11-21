@@ -4,6 +4,7 @@ import { runEventsCommand } from "./commands/events";
 import { runGetCommand } from "./commands/get";
 import { runLabelCommand } from "./commands/label";
 import { runLsCommand } from "./commands/ls";
+import { runProjectsCommand } from "./commands/projects";
 import { runReadCommand } from "./commands/read";
 import { runRunCommand } from "./commands/run";
 import { runSendCommand } from "./commands/send";
@@ -48,6 +49,7 @@ Talk & Wait
 More
   status                      Inspect Antigravity daemon, database, and agentapi health
   events                      Follow state and step changes live (JSON Lines when piped)
+  projects                    List registered Antigravity projects
   templates                   List templates (~/.config/ag-cli/templates)
   schema                      Print the CLI/API JSON Schema
 
@@ -153,6 +155,9 @@ export async function runCli(argv: string[], context: CliContext): Promise<numbe
     }
     if (command === "status" || command === "doctor") {
       return await runStatusCommand(args, context);
+    }
+    if (command === "projects") {
+      return await runProjectsCommand(args, context);
     }
     if (command === "templates") {
       return await runTemplatesCommand(args, context);

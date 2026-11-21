@@ -17,6 +17,8 @@ ag-cli run --bg --name ui-check --cwd /path/to/repo browser-verifier "Verify log
 
 - Prefer `--bg` when running multiple tasks or delegating from another agent so
   your shell tool does not block while waiting.
+- Use `--project <id|name>` when multiple Antigravity projects share the same
+  directory; run `ag-cli projects` to list registered project IDs, names, and folders.
 - Use `--reuse --name <name>` for persistent per-repo workers: if a live
   conversation with that name exists, `ag-cli` reuses its context via `send-message`;
   otherwise it creates a new one.

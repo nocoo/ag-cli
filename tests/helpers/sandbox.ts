@@ -117,6 +117,44 @@ export interface MockRpcOptions {
   statusCodes?: Record<string, number>;
 }
 
+export interface MockProjectFixture {
+  id: string;
+  name: string;
+  folderUris?: string[];
+  resources?: unknown[];
+}
+
+export function projectRpcResponses(
+  projects: MockProjectFixture[],
+): NonNullable<MockRpcOptions["responses"]> {
+  const byId = new Map(projects.map((project) => [project.id, project]));
+  return {
+    ListProjects: { projectIds: projects.map((project) => project.id) },
+    ReadProject: (raw: unknown) => {
+      let parsed: { id?: string } = {};
+      try {
+        parsed = JSON.parse(typeof raw === "string" ? raw : "{}") as { id?: string };
+      } catch {
+        parsed = {};
+      }
+      const found = typeof parsed.id === "string" ? byId.get(parsed.id) : undefined;
+      if (found === undefined) {
+        return {};
+      }
+      const resources =
+        found.resources ??
+        (found.folderUris ?? []).map((uri) => ({ gitFolder: { folderUri: uri } }));
+      return {
+        project: {
+          id: found.id,
+          name: found.name,
+          projectResources: { resources },
+        },
+      };
+    },
+  };
+}
+
 export function startMockLanguageServer(options: MockRpcOptions = {}): Promise<MockLanguageServer> {
   const requests: MockLanguageServer["requests"] = [];
   const rpcCalls: MockLanguageServer["rpcCalls"] = [];
@@ -489,7 +527,7 @@ function main() {
       emit({ error: "not_found" });
       process.exit(1);
     }
-    emit(row);
+    emit({ response: { conversationMetadata: { metadata: row } } });
     return;
   }
   process.stderr.write("mock-agentapi: unknown command " + String(command) + "\\n");
