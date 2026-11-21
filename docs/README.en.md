@@ -10,21 +10,23 @@ It reads Antigravity's `conversation_summaries.db` strictly in read-only mode (`
 
 ## Features
 
-- **Conversation lifecycle**: `run` (with `--bg`, `--name`, and `--reuse`), `ls`, `get`, `read`, `kill`, `rm`, and `label`.
+- **Conversation lifecycle**: `run` (with `--bg`, `--name`, `--reuse`, and `--project`), `ls`, `get`, `read`, `kill`, `rm`, and `label`.
 - **Messaging & waiting**: `send` (with `--wait`), `interrupt`, and `wait` (supporting `--children any|all`).
-- **Observability & protocol**: `events` live stream (NDJSON when piped), `templates`, `status` health check, `schema` CLI/API JSON Schema output, and built-in `ag-cli --skill` instructions.
+- **Observability & protocol**: `events` live stream (NDJSON when piped), `projects` registered project list, `templates`, `status` health check, `schema` CLI/API JSON Schema output, and built-in `ag-cli --skill` instructions.
 - **Adaptive output**: human-readable summaries on TTY; automatic JSON when piped (except `run` and `read`), or always JSON with `--json`.
 - **Deterministic state**: derives five conversation states from observed database and transcript facts without regex-guessing model prose.
 
 ## Usage
 
-Once installed or built, invoke `ag-cli` directly:
+Install globally and invoke `ag-cli` directly:
 
 ```sh
+npm install -g @nocoo/ag
 ag-cli --help
 ag-cli status
+ag-cli projects
 ag-cli run --name demo "Inspect current repository status"
-ag-cli run --bg --name worker "Run tests and summarize results"
+ag-cli run --bg --name worker --project <id|name> "Run tests and summarize results"
 ag-cli wait worker
 ag-cli read worker
 ag-cli ls

@@ -10,21 +10,23 @@
 
 ## 功能
 
-- **会话管理**：`run`（支持 `--bg` 后台派发、`--name` 与 `--reuse` 复用）、`ls`、`get`、`read`、`kill`、`rm`、`label`。
+- **会话管理**：`run`（支持 `--bg` 后台派发、`--name` 与 `--reuse` 复用、`--project` 显式绑定项目）、`ls`、`get`、`read`、`kill`、`rm`、`label`。
 - **对话与等待**：`send`（支持 `--wait`）、`interrupt`、`wait`（支持 `--children any|all` 等待子会话）。
-- **可观测性与协议**：`events` 实时事件流（管道输出为 NDJSON）、`templates` 模板列表、`status` 运行环境体检、`schema` 输出 CLI/API JSON Schema，以及 `ag-cli --skill` 内置操作手册。
+- **可观测性与协议**：`events` 实时事件流（管道输出为 NDJSON）、`projects` 已注册项目列表、`templates` 模板列表、`status` 运行环境体检、`schema` 输出 CLI/API JSON Schema，以及 `ag-cli --skill` 内置操作手册。
 - **自适应输出**：TTY 终端输出人类可读摘要；管道输出默认切换为 JSON（`run` 与 `read` 除外），显式传入 `--json` 时始终输出 JSON。
 - **确定性状态推导**：基于本地数据库与 transcript 观测事实推导五态，不对模型文本做正则猜测。
 
 ## 使用
 
-安装或构建后可直接通过 `ag-cli` 调用：
+全局安装后即可直接通过 `ag-cli` 调用：
 
 ```sh
+npm install -g @nocoo/ag
 ag-cli --help
 ag-cli status
+ag-cli projects
 ag-cli run --name demo "检查当前仓库状态"
-ag-cli run --bg --name worker "运行测试并汇总结果"
+ag-cli run --bg --name worker --project <id|name> "运行测试并汇总结果"
 ag-cli wait worker
 ag-cli read worker
 ag-cli ls
