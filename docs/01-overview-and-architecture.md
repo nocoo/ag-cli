@@ -121,5 +121,5 @@
 - 因此 `ag-cli` 自身**不需要运行常驻后台守护进程**，每次命令执行都是一次轻量级无状态启动 + 本地状态库读写（`ag-cli wait` 和 `ag-cli events` 在调用期内通过 `fs.watch` 阻塞监听），架构复杂度与崩溃恢复面大幅收敛。
 
 ### ADR-03：交互通道选择 `agentapi` + 局部 HTTP RPC 补位
-- 创建会话（`new-conversation`）、发送消息（`send-message`）、查元数据（`get-conversation-metadata`）优先复用官方 `agentapi` 入口并注入发现的环境变量，保证随 Antigravity App 版本升级自动兼容内部 Protobuf 协议变化。
-- 仅在 `agentapi` 尚未暴露的功能上（例如**中断正在运行的会话** `CancelCascadeInvocation`、`ReadProject` 解析工作区绑定的 `project_id` 等），经由 HTTP Connect Endpoint（`http://localhost:<httpPort>/exa.language_server_pb.LanguageServerService/<Method>` + `x-codeium-csrf-token`）补位，并在失败时给出清晰降级提示。
+- 创建会话（`new-conversation [...flags] -- <prompt>`）、发送消息（`send-message [--title ...] -- <id> <content>`）、查元数据（`get-conversation-metadata <id>`）优先复用官方 `agentapi` 入口并注入发现的环境变量，保证随 Antigravity App 版本升级自动兼容内部 Protobuf 协议变化；位置参数前统一加 `--` 隔离前导 `-` 文本（规避 Go `flag` 解析冲突），并兼容解包 `response.*` 嵌套响应。
+- 仅在 `agentapi` 尚未暴露的功能上（例如**中断正在运行的会话** `CancelCascadeInvocation` 传 `{ cascadeId }`、项目查询 `ListProjects` 返回 `{ projectIds }` 与 `ReadProject` 传 `{ id }` 解析工作区绑定的项目元数据），经由 HTTP Connect Endpoint（`http://localhost:<httpPort>/exa.language_server_pb.LanguageServerService/<Method>` + `x-codeium-csrf-token`）补位，并在失败时给出清晰降级提示。

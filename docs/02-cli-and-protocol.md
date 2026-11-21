@@ -31,6 +31,7 @@ Talk & Wait
   wait [c]                    Wait until done, blocked, or error (--children: any|all)
 
 More
+  projects                    List registered Antigravity projects
   templates                   List templates (~/.config/ag-cli/templates)
   events                      Follow state and step changes live (JSON Lines when piped)
   status                      Inspect Antigravity daemon, database, and agentapi health
@@ -48,7 +49,7 @@ Agent? Run: ag-cli --skill
 | --- | --- | --- | --- |
 | `ag-cli run` | 等待时实时进度；结束输出摘要文本 | 同步时输出最终结果文本；`--bg` 时输出单行摘要 | 始终输出完整 JSON 对象 |
 | `ag-cli read` | 格式化输出 Markdown 回复与 Artifacts 路径 | 仅输出纯净回复正文（方便重定向到文件或管道） | 输出包含 `reply`、`artifacts`、`steps`、`telemetry` 的完整 JSON |
-| `ag-cli ls` / `ag-cli get` / `ag-cli status` / `ag-cli templates` / `ag-cli send` / `ag-cli wait` | 人类可读的紧凑表格或键值摘要 | **自动切换为 JSON**（对齐 `hc` 设计） | 始终输出 JSON |
+| `ag-cli ls` / `ag-cli get` / `ag-cli status` / `ag-cli projects` / `ag-cli templates` / `ag-cli send` / `ag-cli wait` | 人类可读的紧凑表格或键值摘要 | **自动切换为 JSON**（对齐 `hc` 设计） | 始终输出 JSON |
 | `ag-cli events` | 人类可读的事件时间线 | 逐行输出 JSON Lines（NDJSON） | 逐行输出 JSON Lines（NDJSON） |
 
 ### 1.2 NPM 包名与 CLI 命令名实测及决议（D2）
@@ -105,7 +106,8 @@ Usage: ag-cli run [OPTIONS] [TEMPLATE_OR_PROMPT] [PROMPT]
 | `--bg` | boolean | `false` | 派发后立即返回，打印短 ID 与 UUID（同 `hc run --bg`）。默认同步等待首轮结束 |
 | `--name <NAME>` | string | 无 | 分配人类可读唯一名称（如 `deps-clip`）。默认若同名活跃会话已存在则报错 `name_conflict` |
 | `--reuse` | boolean | `false` | 必须与 `--name` 联用：若同名且未终止（`killed = 0`）的会话已存在，**直接复用**该会话并通过 `send-message` 派发本轮任务（彻底替代手工查 SQL）；若不存在则新建并绑定该名称 |
-| `--cwd <DIR>` | path | 当前工作目录 | 目标工作目录；自动匹配 Antigravity 中已注册的 `projectId` 并注入 `ANTIGRAVITY_PROJECT_ID`，同时在首条消息上下文标注工作路径 |
+| `--cwd <DIR>` | path | 当前工作目录 | 目标工作目录；未传 `--project` 时自动匹配 Antigravity 中绑定该路径的唯一项目并注入 `ANTIGRAVITY_PROJECT_ID`（若多个项目共用同一目录，报 `ambiguous_target` 并列出候选 ID 与名称），同时在首条消息上下文标注工作路径 |
+| `--project <ID\|NAME>` | string | 无 | 显式绑定目标 Antigravity 项目（支持精确 UUID 或精确项目名），优先级高于模板 `project` 与 `--cwd` 自动匹配。完整解析顺序：`--project` > 模板 `project` > `--cwd` 唯一匹配 > 仅当未显式指定 `--project` 与 `--cwd` 时回退环境变量 `ANTIGRAVITY_PROJECT_ID` |
 | `--model <MODEL>` | string | `flash` | 模型档位或精确 ID，如 `flash`、`flash_lite`、`pro`、`gemini-3.8-flash-medium` |
 | `--profile <PROFILE>` | string | 无 | 透传给 `agentapi new-conversation --profile` |
 | `--title <TITLE>` | string | 自动生成 | 在 Antigravity 侧边栏显示的会话标题（未传时优先取 `--name`，否则截断 prompt 前 40 字符） |
@@ -267,7 +269,7 @@ Artifacts (1):
 - **`ag-cli label <C> <K=V>...`**：
   - 写入或删除（`key=`）`state.db` 中的标签，支持同名覆盖。
 - **`ag-cli interrupt <C>`**：
-  - 向本地 `language_server` 调用 `CancelCascadeInvocation` RPC 中断当前正在进行的 turn（保留会话上下文，使状态退回可继续交互态）；若 RPC 不可用，返回明确错误提示，不假装成功。
+  - 向本地 `language_server` 调用 `CancelCascadeInvocation` RPC（传 `{ cascadeId }`）中断当前正在进行的 turn（保留会话上下文，使状态退回可继续交互态）；若 RPC 不可用，返回明确错误提示，不假装成功。
 - **`ag-cli kill <C>`**：
   - 先尝试 `CancelCascadeInvocation` 停止运行中步骤，然后在 `state.db` 标记该会话 `terminated = 1`（使其脱离默认 `ag-cli ls` 与 `--reuse` 池）。
 - **`ag-cli rm <C> [--purge-brain]`**：
@@ -275,13 +277,15 @@ Artifacts (1):
 
 ---
 
-### 3.6 `ag-cli events` / `ag-cli templates` / `ag-cli status` / `ag-cli schema` / `ag-cli --skill`
+### 3.6 `ag-cli events` / `ag-cli projects` / `ag-cli templates` / `ag-cli status` / `ag-cli schema` / `ag-cli --skill`
 
 - **`ag-cli events [OPTIONS]`**：
   - 过滤参数：`--target <C>`、`--children-of <C>`、`--label <K=V>`。
   - 持续输出事件流（Piped / `--json` 下为 NDJSON）：`created`、`status`、`step`、`turn`、`artifact`、`heartbeat`（每 15s）。
+- **`ag-cli projects [--json]`**：
+  - 连接本机 `language_server` daemon，调用 `ListProjects` 与 `ReadProject({ id })` 列出当前注册的 Antigravity 项目（输出字段 `id`、`name`、`folderUris`），便于在共用目录的多项目场景中查询 `--project` 目标。
 - **`ag-cli templates`**：
-  - 扫描 `~/.config/ag-cli/templates/*.md`，输出模板名、默认模型、默认 `profile` 及描述。
+  - 扫描 `~/.config/ag-cli/templates/*.md`，支持 YAML frontmatter 字段 `name`、`description`、`model`、`profile`、`cwd`、`project`、`notify`、`raw`、`timeout`，输出模板列表与默认配置。
 - **`ag-cli status`**（别名 `ag-cli doctor`）：
   - 检查：① `~/.gemini/antigravity/daemon/hub_*.json` 是否存在且 PID 存活、`/healthz` 是否可达；② `conversation_summaries.db` 是否可读；③ `~/.gemini/antigravity/bin/agentapi` 是否存在可执行；④ `state.db` 状态。
 - **`ag-cli schema`**：
