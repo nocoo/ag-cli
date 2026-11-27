@@ -32,7 +32,7 @@ bun run ci:package       # P1 npm pack + installed bin & compiled binary smoke t
 
 ## Quality & Local Gates
 
-Follows `system1-quality`; CI runs `.github/workflows/ci.yml` -> [`.github/workflows/quality-slots.yml`](.github/workflows/quality-slots.yml) (`quality / Z1: Gate` required on `main`). Status vocabulary: `enforced`, `planned`, `manual`, `N/A`.
+Follows `system1-quality`; CI runs `.github/workflows/pipeline.yml` -> [`.github/workflows/quality-slots.yml`](.github/workflows/quality-slots.yml) (`quality / Z1: Gate` required on `main`, pinned `base-ci` `v2026.24`). No automated CD workflow: releases use local `npm publish` only after verified CI. Status vocabulary: `enforced`, `planned`, `manual`, `N/A`.
 
 - **Exceptions / boundaries**: `L2 Runtime` is `N/A` (local macOS CLI wrapper without Cloudflare Worker or platform runtime bindings); all other 11 slots are `enforced` in CI.
 - **Coverage scope**: `L1 Unit` enforces >= 95% statements/branches/functions/lines on `src/**/*.ts` excluding `src/types/**` and `src/index.ts` ([vitest.config.ts](vitest.config.ts)).
